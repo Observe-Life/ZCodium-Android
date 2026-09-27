@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   build:
-    name: Build signed APK
+    name: Build signed APK + debug APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,10 +33,12 @@ jobs:
           yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
           "$SDKMGR" "platform-tools" "platforms;android-36" "build-tools;36.0.0" > /dev/null
           echo "sdk ready"
-      - name: Assemble release
+      - name: Assemble release + debug
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          ./gradlew :app:assembleRelease :app:assembleDebug --no-daemon --stacktrace
+          cp "$(find app/build/outputs/apk/debug -name '*.apk' | head -1)" ZCodium-debug.apk
+          ls -la ZCodium-debug.apk
       - name: Sign APK for direct install
         run: |
           set -e
@@ -51,16 +53,25 @@ jobs:
           name: ZCodium-apk
           path: ZCodium.apk
           retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZCodium-debug-apk
+          path: ZCodium-debug.apk
+          retention-days: 7
 
   emulator-test:
     name: Headless emulator test (Android 16)
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: ZCodium-apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZCodium-debug-apk
       - name: Enable KVM for headless emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -79,6 +90,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: emulator-screenshots
+          name: test-report
           path: screenshots
-          retention-days: 30
+          retention-days: 14
