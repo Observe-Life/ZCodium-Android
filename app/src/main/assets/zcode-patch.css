@@ -1,0 +1,221 @@
+/* ZCode Remote 补丁样式（BUILD-007）
+   仅作用于注入的 zp-* 节点；对官方节点只做 data-zp-hide 隐藏，不改官方样式 */
+
+[data-zp-hide]{display:none!important}
+html,body{overflow-x:hidden!important;max-width:100%}
+
+/* ── 防闪烁：官方标题栏在首帧即隐藏（CSS 先行；JS 侧仍保留高度安全检查与锚点兜底） ── */
+section[data-mobile-page="chat"] header[data-testid="workspace-header"],
+section[data-mobile-page="chat"] header.\@container\/workspace-header{display:none!important}
+section[data-mobile-page="chat"] div:has(> button[aria-label*="返回任务首页"]){display:none!important}
+/* 首页：官方品牌行 header（官方 bundle 内唯一类名组合，含标题/连接状态/调色板按钮）与通知卡
+   预隐藏必须在首帧生效，否则 JS 补丁跑起来前官方行会露一瞬（"闪一下"） */
+header.shrink-0.border-b.border-border.bg-header.px-4.py-3,
+section:not([data-mobile-page="chat"]) header.shrink-0.border-b.border-border.bg-header,
+header.bg-header{display:none!important}
+div.rounded-lg.border.border-card-border.bg-card.p-3.text-ui-base\/relaxed.text-foreground-subtle{display:none!important}
+
+/* ── 注入的标题栏 / 工具栏 ── */
+#zp-root{--zp-line:#e4e4e7;--zp-sub:#52525b;--zp-muted:#a1a1aa;--zp-blue:#2563eb;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--color-background,#fff);color:var(--color-foreground,#18181b);
+  flex:none;position:relative;z-index:100}
+.zp-bar{display:flex;align-items:center;gap:6px;height:44px;padding:0 8px;border-bottom:1px solid var(--zp-line);background:var(--color-background,#fff)}
+.zp-brand{flex:1;min-width:0;display:flex;align-items:baseline;overflow:hidden}
+.zp-brand b{font-size:18px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;color:var(--color-foreground,#18181b)}
+.zp-brand em{font-style:normal;font-size:12px;color:var(--zp-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-left:9px}
+.zp-title{flex:1;min-width:0;text-align:center;font-size:16.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-foreground,#18181b)}
+.zp-ibtn{width:36px;height:36px;flex:none;display:grid;place-items:center;border-radius:10px;color:var(--zp-sub);background:none;border:0;cursor:pointer;padding:0}
+.zp-ibtn:active{background:var(--color-surface,#f4f4f5)}
+.zp-ibtn svg{width:20px;height:20px;display:block}
+.zp-tools{display:flex;gap:6px;height:52px;padding:7px 10px;border-bottom:1px solid var(--zp-line);background:var(--color-background,#fff)}
+.zp-tbtn{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:11px;color:var(--zp-sub);font-size:11px;background:none;border:0;cursor:pointer;padding:0}
+.zp-tbtn:active{background:var(--color-surface,#f4f4f5);color:var(--color-foreground,#18181b)}
+.zp-tbtn svg{width:19px;height:19px;display:block}
+
+/* ── 右侧多标签侧栏 ── */
+#zp-side{position:fixed;inset:0;z-index:2147483000;pointer-events:none;overflow:hidden}
+#zp-side.zp-open{pointer-events:auto}
+#zp-side:not(.zp-open){visibility:hidden}
+.zp-side-mask{position:absolute;inset:0;background:#18181b99;opacity:0;transition:opacity .2s}
+#zp-side.zp-open .zp-side-mask{opacity:1}
+.zp-side-panel{position:absolute;top:0;right:0;height:100%;width:min(88vw,26rem);max-width:100%;
+  background:#fff;border-left:1px solid var(--zp-line);box-shadow:none;
+  display:flex;flex-direction:column;transform:translateX(102%);transition:transform .22s ease;
+  font-family:inherit;color:#18181b}
+#zp-side.zp-open .zp-side-panel{transform:translateX(0);box-shadow:-14px 0 40px #0003}
+.zp-tabbar{flex:none;display:flex;align-items:center;gap:6px;padding:8px 8px 8px 10px;border-bottom:1px solid var(--zp-line)}
+.zp-collapse{width:30px;height:30px;flex:none;border-radius:8px;display:grid;place-items:center;color:var(--zp-sub);background:none;border:0;cursor:pointer;padding:0}
+.zp-collapse:active{background:#f4f4f5}
+.zp-collapse svg{width:16px;height:16px}
+.zp-tabs{flex:1;min-width:0;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.zp-tabs::-webkit-scrollbar{display:none}
+.zp-tab{flex:0 1 108px;min-width:58px;height:30px;display:flex;align-items:center;gap:5px;padding:0 6px 0 9px;
+  border-radius:8px;background:#f7f7f8;border:1px solid var(--zp-line);font-size:12px;color:var(--zp-sub);cursor:pointer}
+.zp-tab.zp-active{background:#f4f4f5;border-color:#d4d4d8;color:#18181b}
+.zp-tab .tico{flex:none;width:13px;height:13px;color:var(--zp-blue)}
+.zp-tab .tico svg{width:13px;height:13px;display:block}
+.zp-tab .tlabel{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.zp-tab .tclose{flex:none;width:16px;height:16px;display:grid;place-items:center;border-radius:4px;color:var(--zp-muted);background:none;border:0;cursor:pointer;padding:0}
+.zp-tab .tclose:active{background:#e4e4e7}
+.zp-tab .tclose svg{width:11px;height:11px}
+.zp-add{width:30px;height:30px;flex:none;border-radius:8px;display:grid;place-items:center;color:var(--zp-sub);border:1px dashed #d4d4d8;background:none;cursor:pointer;padding:0}
+.zp-add:active{background:#f4f4f5}
+.zp-add svg{width:15px;height:15px}
+.zp-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scroll-behavior:smooth}
+.zp-pane{display:none}
+.zp-pane.zp-activepane{display:block}
+.zp-side-panel{overscroll-behavior:contain}
+.zp-pathbar{position:sticky;top:0;display:flex;align-items:center;gap:4px;padding:8px 12px;font-size:12px;color:var(--zp-muted);
+  border-bottom:1px solid var(--zp-line);white-space:nowrap;overflow:hidden;background:#fff}
+.zp-pathbar b{color:var(--zp-sub);font-weight:500}
+.zp-nav{padding:8px 12px 22px;display:flex;flex-direction:column;gap:0}
+.zp-nav-item{padding:11px 10px;cursor:pointer;background:none;border:0;width:100%;text-align:left;font:inherit;color:inherit}
+.zp-nav-item.g-u{margin-top:10px;border-left:3px solid var(--zp-blue);background:#eff6ff;padding-left:10px;border-radius:10px 10px 0 0}
+.zp-nav-item.g-a{margin-bottom:6px;border-left:3px solid #0f766e;background:#f4faf8;padding-left:10px;border-radius:0 0 10px 10px}
+.zp-nav-item.g-u + .zp-nav-item.g-u{margin-top:0;border-radius:0}
+.zp-nav-item.g-a + .zp-nav-item.g-a{margin-bottom:0;border-radius:0}
+.zp-nav-item.zp-cur{outline:1.5px solid var(--zp-blue);outline-offset:-1.5px}
+.zp-nav-item:active{filter:brightness(.97)}
+.zp-nav-item .nq{font-size:13.5px;line-height:1.5;color:var(--color-foreground,#18181b);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.zp-nav-item .nmeta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px}
+.zp-nav-item .nrole{font-size:11.5px;color:var(--zp-muted)}
+.zp-nav-item .nrole.u{color:var(--zp-blue)}
+.zp-nav-item .nrole.a{color:#0f766e}
+.zp-nav-item .ntime{font-size:11px;color:var(--zp-muted);white-space:nowrap}
+
+/* ── 搜索词级高亮（CSS Custom Highlight API） ── */
+::highlight(zp-search){background-color:#fde047;color:#18181b}
+::highlight(zp-searchcur){background-color:#fb923c;color:#18181b}
+
+/* ── 搜索条（文档流内，注入栏下方） ── */
+#zp-searchbar{display:flex;align-items:center;gap:8px;width:100%;
+  padding:8px 10px;background:var(--color-background,#fff);border-bottom:1px solid var(--zp-line)}
+#zp-searchbar input{flex:1;min-width:0;height:38px;border:1px solid var(--zp-line);border-radius:10px;padding:0 12px;
+  font-size:14px;color:var(--color-foreground,#18181b);background:var(--color-surface,#f4f4f5);outline:none}
+#zp-searchbar .zp-scnt{font-size:12px;color:var(--zp-muted);white-space:nowrap;min-width:30px;text-align:center}
+#zp-searchbar .zp-sclose,#zp-searchbar .zp-snav{width:34px;height:34px;flex:none;display:grid;place-items:center;border:0;border-radius:9px;
+  background:var(--color-surface,#f4f4f5);color:var(--zp-sub);cursor:pointer;padding:0}
+#zp-searchbar .zp-snav:active,#zp-searchbar .zp-sclose:active{background:var(--color-card,#e4e4e7)}
+
+/* ── 输入框内容可滚动（新13；软键盘弹出后也要能在框内上下滑） ── */
+textarea,
+[data-testid="chat-input"],
+[contenteditable="true"]{
+  overscroll-behavior:contain!important;
+  touch-action:pan-y!important;
+  overflow-y:auto!important;
+  -webkit-overflow-scrolling:touch;
+}
+
+/* ── 模型名 / 思考级别名：给图标右边腾位置，不被发送键挤掉 ── */
+[data-v4-composer-dock-content] .flex.items-end,
+[data-v4-composer-dock] .flex.items-end{flex-wrap:nowrap;min-width:0}
+button[data-model-current-value],
+[data-thought-level-fixed],
+button[aria-label*="思考"],
+button[aria-label*="Thought"]{
+  display:inline-flex!important;align-items:center!important;gap:4px!important;
+  flex:0 1 auto!important;min-width:0;max-width:46%;width:auto!important;overflow:visible!important
+}
+.zp-clabel,#zp-mname,#zp-tname{
+  display:inline-block!important;max-width:9.6em;margin-left:2px;
+  font-size:11px;line-height:1.2;color:var(--color-foreground-subtle,#52525b);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;pointer-events:none;flex:none
+}
+
+/* ── 图片预览（7）：去图片边框/阴影/底色遮罩，去四周留白，隐藏底部缩放比例部件 ── */
+div[class*="touch-none cursor-grab"] img{border:none!important;border-radius:0!important;box-shadow:none!important;background:transparent!important}
+div[class*="bottom-4"][class*="border-popover-border"]{display:none!important}
+div[class*="100dvh-1rem"][class*="100vw-1rem"]{width:100vw!important;height:100dvh!important;padding:0!important}
+
+/* ── 隐藏回答下方点赞/点踩（新8） ── */
+button[aria-label="赞"],button[aria-label="踩"],
+button[aria-label="已赞"],button[aria-label="已踩"],
+button[aria-label="Like"],button[aria-label="Dislike"],
+button[aria-label="Liked"],button[aria-label="Disliked"]{display:none!important}
+
+/* ── 长按保存确认按钮（新10） ── */
+#zp-savebtn{position:fixed;z-index:2147483646;background:#fff;color:#18181b;font-size:15px;font-weight:600;
+  padding:14px 28px;border-radius:14px;border:1px solid #e4e4e7;cursor:pointer;
+  box-shadow:0 8px 28px #0005;pointer-events:auto!important;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+#zp-slide-ghost{position:fixed;inset:0;z-index:2147482000;pointer-events:none;overflow:hidden;background:var(--color-background,#fff)}
+.zp-tree{padding:12px 16px 26px;font-size:13.5px;line-height:2.05;user-select:none}
+.zp-tnode{display:flex;align-items:center;gap:7px;border-radius:7px;padding:0 8px;cursor:default}
+.zp-tnode.zp-click{cursor:pointer}
+.zp-tnode.zp-click:active{background:#f7f7f8}
+.zp-tnode svg{width:15px;height:15px;flex:none;color:var(--zp-sub)}
+.zp-tnode.zp-doc svg{color:var(--zp-blue)}
+.zp-tnode b{font-weight:600}
+.zp-tchildren{padding-left:20px}
+.zp-note{font-size:11px;color:var(--zp-muted);padding:2px 8px 16px}
+.zp-empty{padding:40px 20px;text-align:center;color:var(--zp-muted);font-size:13.5px;line-height:1.8}
+
+/* ── 高亮 / Toast ── */
+.zp-hl{animation:zp-hl 1.6s ease-out;border-radius:8px}
+@keyframes zp-hl{0%{background:#fde68a;box-shadow:inset 0 0 0 1px #f59e0b}100%{background:transparent;box-shadow:inset 0 0 0 1px transparent}}
+#zp-toast{position:fixed;left:50%;bottom:104px;transform:translateX(-50%) translateY(8px);background:#18181be6;color:#fff;
+  font-size:13px;padding:10px 17px;border-radius:11px;opacity:0;transition:.2s;z-index:2147483600;pointer-events:none;max-width:82%;text-align:center}
+#zp-toast.zp-show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.theme-zai-dark #zp-root,
+.dark #zp-root,
+[data-theme="dark"] #zp-root,
+.theme-zai-dark .zp-side-panel,
+.dark .zp-side-panel,
+[data-theme="dark"] .zp-side-panel {
+  --zp-line:#2d2d30;--zp-sub:#a1a1aa;--zp-muted:#71717a;background:#161616;color:#f4f4f5
+}
+.theme-zai-dark .zp-bar,
+.dark .zp-bar,
+[data-theme="dark"] .zp-bar,
+.theme-zai-dark .zp-tools,
+.dark .zp-tools,
+[data-theme="dark"] .zp-tools,
+.theme-zai-dark .zp-side-panel,
+.dark .zp-side-panel,
+[data-theme="dark"] .zp-side-panel,
+.theme-zai-dark .zp-pathbar,
+.dark .zp-pathbar,
+[data-theme="dark"] .zp-pathbar {
+  background:#161616
+}
+.theme-zai-dark .zp-tab,
+.dark .zp-tab,
+[data-theme="dark"] .zp-tab {
+  background:#202024;border-color:#2d2d30
+}
+.theme-zai-dark .zp-tab.zp-active,
+.dark .zp-tab.zp-active,
+[data-theme="dark"] .zp-tab.zp-active {
+  background:#2b2b2f;border-color:#45454a
+}
+.theme-zai-dark .zp-ibtn:active,
+.dark .zp-ibtn:active,
+[data-theme="dark"] .zp-ibtn:active,
+.theme-zai-dark .zp-tbtn:active,
+.dark .zp-tbtn:active,
+[data-theme="dark"] .zp-tbtn:active,
+.theme-zai-dark .zp-collapse:active,
+.dark .zp-collapse:active,
+[data-theme="dark"] .zp-collapse:active,
+.theme-zai-dark .zp-add:active,
+.dark .zp-add:active,
+[data-theme="dark"] .zp-add:active,
+.theme-zai-dark .zp-nav-item:active,
+.dark .zp-nav-item:active,
+[data-theme="dark"] .zp-nav-item:active,
+.theme-zai-dark .zp-tnode.zp-click:active,
+.dark .zp-tnode.zp-click:active,
+[data-theme="dark"] .zp-tnode.zp-click:active {
+  background:#26262a
+}
+
+@media (prefers-color-scheme:dark){
+  #zp-root{--zp-line:#3f3f46;--zp-sub:#a1a1aa;--zp-muted:#71717a;background:var(--color-background,#101012);color:var(--color-foreground,#f4f4f5)}
+  .zp-bar,.zp-tools,.zp-side-panel,.zp-pathbar{background:var(--color-background,#101012)}
+  .zp-tab{background:var(--color-surface,#1c1c1f);border-color:var(--zp-line)}
+  .zp-tab.zp-active{background:var(--color-card,#27272a);border-color:#52525b}
+  .zp-ibtn:active,.zp-tbtn:active,.zp-collapse:active,.zp-add:active,.zp-nav-item:active,.zp-tnode.zp-click:active{background:var(--color-surface,#27272a)}
+  .zp-side-mask{background:#000000b3}
+}
