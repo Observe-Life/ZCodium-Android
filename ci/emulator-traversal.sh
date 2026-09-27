@@ -83,7 +83,10 @@ adb shell pm clear app.zcodium.remote >/dev/null 2>&1
 amstart
 
 # ---------- 主循环：逐条用例 ----------
-while IFS=$'\t' read -r grp id desc waits setup locate action verify; do
+# 必须用 fd3 读表：循环体内 adb/python 会继承 stdin，直接 read <文件 会被子进程吞掉剩余行（上一轮只跑1条的根因）
+EXPECTED=$(awk -F'\t' -v g="${ZP_GROUPS:-}" 'BEGIN{n=split(g,a,",");for(i=1;i<=n;i++)ok[a[i]]=1} !/^#/ && NF==8 && (g==""||($1 in ok)){c++} END{print c+0}' "$CASES")
+say "用例表共 $EXPECTED 条"
+while IFS=$'\t' read -r grp id desc waits setup locate action verify <&3; do
   case "$grp" in ''|'#'*) continue;; esac
   in_groups "$grp" || continue
   TOTAL=$((TOTAL+1))
@@ -116,7 +119,12 @@ while IFS=$'\t' read -r grp id desc waits setup locate action verify; do
   meas=$(sanitize </tmp/zp.verify)
   echo "[$id] STAGE=verify 实测=[$meas] 期望=[$(printf '%s' "$verify" | head -c 90)] 判定=$verdict"
   record "$id" "$desc" "$verdict" "$meas"
-done < "$CASES"
+done 3< "$CASES"
+
+if [ "$TOTAL" -ne "$EXPECTED" ]; then
+  echo "[engine] STAGE=final 实测=实际执行=$TOTAL 期望=$EXPECTED 判定=FAIL（读表被打断，禁止假绿）"
+  FAILN=$((FAILN+1))
+fi
 
 # ---------- 收尾 ----------
 echo "== 崩溃终检 =="
