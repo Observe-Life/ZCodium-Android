@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ZCodium 安卓端「全功能遍历」测试脚本（无头安卓16模拟器 + 与电脑端公网联调）
 # 用法：bash ci/emulator-traversal.sh "<手机待填网址>"
-# 说明：脚本通过 uiautomator dump 解析界面元素，用 adb input 驱动；每一步截图；最后查崩溃日志。
+# 说明：通过 uiautomator dump 解析界面元素、adb input 驱动界面；每步截图；末尾查崩溃日志。
+# 注意：本脚本不使用 heredoc（CI 环境对多行 heredoc 的行尾处理不稳），python 一律用单引号包裹的多行 -c 参数。
 set -u
 
 URL="${1:-}"
@@ -19,10 +20,8 @@ dump_ui() {
   adb shell cat /sdcard/ui.xml 2>/dev/null
 }
 
-# 在 UI XML 中查找节点（按 text 子串、content-desc 子串、或 class 名），输出中心坐标
-find_node() {
-  local xml="$1" kind="$2" needle="$3"
-  printf '%s' "$xml" | python3 - "$kind" "$needle" <<'PY'
+# 在 UI XML 中查找节点（kind=text: 匹配 text/content-desc 子串；kind=class: 匹配 class 全名），输出中心坐标
+PY_FIND='
 import sys, re
 import xml.etree.ElementTree as ET
 kind, needle = sys.argv[1], sys.argv[2]
@@ -41,11 +40,17 @@ for n in root.iter():
             print((int(m[0]) + int(m[2])) // 2, (int(m[1]) + int(m[3])) // 2)
             sys.exit(0)
 sys.exit(1)
+'
+
+find_node() {
+  local xml="$1" kind="$2" needle="$3"
+  printf '%s' "$xml" | python3 -c "$PY_FIND" "$kind" "$needle"
 }
 
 tap_text() {
   local needle="$1"
-  local xy; xy=$(find_node "$(dump_ui)" text "$needle") || return 1
+  local xy
+  xy=$(find_node "$(dump_ui)" text "$needle") || return 1
   say "tap '$needle' at $xy"
   adb shell input tap $xy
   return 0
@@ -53,7 +58,8 @@ tap_text() {
 
 tap_class() {
   local cls="$1"
-  local xy; xy=$(find_node "$(dump_ui)" class "$cls") || return 1
+  local xy
+  xy=$(find_node "$(dump_ui)" class "$cls") || return 1
   say "tap <$cls> at $xy"
   adb shell input tap $xy
   return 0
@@ -61,33 +67,32 @@ tap_class() {
 
 has_text() { find_node "$(dump_ui)" text "$1" >/dev/null 2>&1; }
 
+expect_text() {
+  if has_text "$1"; then ok "界面出现「$1」"; else fail "界面未出现「$1」"; fi
+}
+
 shot() {
   STEP=$((STEP + 1))
   adb exec-out screencap -p > "$SHOTS/$(printf '%02d' "$STEP")-$1.png" 2>/dev/null
 }
 
-expect_text() { # 期望界面出现某文案
-  if has_text "$1"; then ok "界面出现「$1」"; else fail "界面未出现「$1」"; fi
-}
-
-# ── 0. 参数检查
 if [ -z "$URL" ]; then
   fail "未提供待填网址（workflow 输入 phone_url 为空）"
   exit 1
 fi
 say "待填网址 = $URL"
 
-# ── 1. 安装并启动
+echo "== 1. 安装并启动 =="
 adb install -r ZCodium.apk || { fail "APK 安装失败"; exit 1; }
 ok "APK 已安装"
-adb shell pm clear app.zcodium.remote >/dev/null 2>&1   # 清空上次数据，保证首启为"空状态"
+adb shell pm clear app.zcodium.remote >/dev/null 2>&1
 adb shell am start -W -n app.zcodium.remote/.MainActivity >/dev/null 2>&1
 sleep 8
 expect_text "ZCodium"
 expect_text "连接"
 shot "launch"
 
-# ── 2. 填网址
+echo "== 2. 填入网址 =="
 if tap_class "android.widget.EditText"; then
   sleep 1
   adb shell input text "$(printf '%s' "$URL" | sed 's/ /%s/g')"
@@ -98,9 +103,9 @@ else
 fi
 shot "url-filled"
 
-# ── 3. 连接（应与电脑端经公网隧道建立真实连接）
+echo "== 3. 连接（经公网隧道直连电脑端）=="
 tap_text "连接" || fail "未找到「连接」按钮"
-sleep 20
+sleep 25
 if has_text "刷新" || has_text "已连接到电脑智能体"; then
   ok "页面已连接（出现工具栏/连接状态）"
 else
@@ -108,26 +113,26 @@ else
 fi
 shot "connected"
 
-# ── 4. 会话/工作区信息
+echo "== 4. 会话列表 =="
 if has_text "工作区"; then ok "工作区区块出现"; else say "（未识别到工作区文案，继续）"; fi
 shot "workspace-list"
 
-# ── 5. 刷新
+echo "== 5. 刷新 =="
 tap_text "刷新" && sleep 5 && ok "刷新已点击" || fail "未找到「刷新」"
 shot "after-refresh"
 
-# ── 6. 搜索
+echo "== 6. 搜索 =="
 if tap_text "搜索"; then
   sleep 5
   if has_text "取消" || has_text "搜索"; then ok "搜索界面已打开"; else fail "搜索界面未出现"; fi
   shot "search"
-  adb shell input keyevent 4 >/dev/null 2>&1   # 返回关闭搜索
+  adb shell input keyevent 4 >/dev/null 2>&1
   sleep 3
 else
   fail "未找到「搜索」"
 fi
 
-# ── 7. 新建会话
+echo "== 7. 新建会话 =="
 if tap_text "新建"; then
   sleep 8
   if has_text "发送" || has_text "向 ZCode 提问" || has_text "继续输入"; then
@@ -142,7 +147,7 @@ else
   fail "未找到「新建」"
 fi
 
-# ── 8. 远控按钮（应弹出网址输入对话框）
+echo "== 8. 远控对话框 =="
 if tap_text "远控"; then
   sleep 4
   if has_text "取消" || has_text "连接"; then ok "远控对话框已弹出"; else fail "远控对话框未出现"; fi
@@ -153,7 +158,7 @@ else
   fail "未找到「远控」"
 fi
 
-# ── 9. 主题切换
+echo "== 9. 主题 =="
 if tap_text "主题"; then
   sleep 5
   ok "主题按钮已点击"
@@ -164,15 +169,15 @@ else
   fail "未找到「主题」"
 fi
 
-# ── 10. 稳定性复查
+echo "== 10. 稳定性复查 =="
 sleep 5
 if has_text "刷新" || has_text "新建"; then ok "多轮操作后界面仍存活"; else fail "多轮操作后界面异常"; fi
 shot "final"
 
-# ── 11. 崩溃检查
+echo "== 11. 崩溃检查 =="
 if adb logcat -d | grep -E "FATAL EXCEPTION|AndroidRuntime: process: app.zcodium.remote" >/dev/null 2>&1; then
   fail "检测到应用崩溃日志"
-  adb logcat -d -t 200 | grep -A 20 -E "FATAL EXCEPTION" | head -40
+  adb logcat -d -t 200 | grep -A 20 "FATAL EXCEPTION" | head -40
 else
   ok "无崩溃日志"
 fi
