@@ -47,7 +47,16 @@ has_text() { find_node "$(dump_ui)" text "$1" >/dev/null 2>&1; }
 ntext() { has_text "$1"; }
 ntap() { local xy; xy=$(find_node "$(dump_ui)" text "$1") || return 1; adb shell input tap $xy; }
 ntapc() { local xy; xy=$(find_node "$(dump_ui)" class "$1") || return 1; adb shell input tap $xy; }
-ntype() { adb shell "input text '$1'" >/dev/null 2>&1; }
+# 长串 input text 会因事件队列溢出丢字（首轮 URL 只剩尾巴的根因）——分段发送，每段15字符间隔0.4s
+ntype() {
+  local s="$1" i=0 chunk
+  while [ "$i" -lt "${#s}" ]; do
+    chunk="${s:$i:15}"
+    adb shell "input text '$chunk'" >/dev/null 2>&1
+    i=$((i + 15))
+    sleep 0.4
+  done
+}
 
 # ---------- L2 网页探针（CDP） ----------
 probe() { python3 ci/web-probe.py "$@"; }
