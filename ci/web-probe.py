@@ -60,7 +60,8 @@ def connect():
 
 class CDP(object):
     def __init__(self):
-        self.ws = websocket.create_connection(connect(), timeout=15, max_size=32 * 1024 * 1024)
+        # suppress_origin：WebView DevTools 套接字会拒绝带 Origin 头的 WebSocket 握手（403 Rejected）
+        self.ws = websocket.create_connection(connect(), timeout=15, max_size=32 * 1024 * 1024, suppress_origin=True)
         self.mid = 0
 
     def cmd(self, method, params=None, timeout=20):

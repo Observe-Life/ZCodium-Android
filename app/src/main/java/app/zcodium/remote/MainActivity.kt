@@ -376,7 +376,9 @@ class MainActivity : Activity() {
         val normalized = rawUrl.trim()
         val uri = runCatching { Uri.parse(normalized) }.getOrNull()
         if (uri == null || uri.scheme?.equals("https", true) != true || uri.host.isNullOrBlank()) {
-            Toast.makeText(this, R.string.invalid_url, Toast.LENGTH_SHORT).show()
+            val msg = getString(R.string.invalid_url)
+            Log.i(TAG, "toast:$msg") // toast 不上 logcat；遍历断言靠这行判定提示是否出现
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
             return
         }
         getPreferences(MODE_PRIVATE).edit().putString(KEY_REMOTE_URL, uri.toString()).apply()
