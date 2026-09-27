@@ -79,10 +79,7 @@ jobs:
             sleep 6
             adb exec-out screencap -p > screenshots/02-deeplink.png
             adb shell dumpsys activity activities | grep -i mResumedActivity || true
-            if adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime: process: app.zcodium.remote'; then
-              echo 'crash detected'
-              exit 1
-            fi
+            adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime: process: app.zcodium.remote' && (echo 'crash detected'; exit 1) || echo 'no crash'
             echo 'emulator smoke test passed'
       - uses: actions/upload-artifact@v4
         if: always()
