@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - '.github/**'
       - '*.md'
+      - 'ci/**'
   workflow_dispatch:
     inputs:
       phone_url:
@@ -74,25 +75,7 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: |
-            mkdir -p screenshots
-            PHONE_URL="${{ github.event.inputs.phone_url }}"
-            if [ -n "$PHONE_URL" ]; then
-              echo "== 全功能遍历（含与电脑端公网联调）=="
-              bash ci/emulator-traversal.sh "$PHONE_URL"
-            else
-              echo "== 基础冒烟（未提供 phone_url）=="
-              adb install -r ZCodium.apk
-              adb shell am start -W -n app.zcodium.remote/.MainActivity
-              sleep 12
-              adb shell pidof app.zcodium.remote || (adb logcat -d -t 300; exit 1)
-              adb exec-out screencap -p > screenshots/01-main.png
-              adb shell am start -a android.intent.action.VIEW -d 'zcode://session?sess=smoke' -n app.zcodium.remote/.MainActivity
-              sleep 6
-              adb exec-out screencap -p > screenshots/02-deeplink.png
-              adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime: process: app.zcodium.remote' && (echo 'crash detected'; exit 1) || echo 'no crash'
-              echo 'smoke passed'
-            fi
+          script: bash ci/emulator-run.sh "${{ github.event.inputs.phone_url }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
