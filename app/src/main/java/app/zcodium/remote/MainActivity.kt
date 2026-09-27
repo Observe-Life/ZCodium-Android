@@ -473,6 +473,10 @@ class MainActivity : Activity() {
             setSupportMultipleWindows(false)
         }
         browser.addJavascriptInterface(ZCodeNativeBridge(), "ZCodeNative")
+        // 仅调试包开放 DevTools 套接字（CI 的 CDP 探针靠它进网页内部断言）；正式包不留此通道
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
         cachedUserAgent = WebSettings.getDefaultUserAgent(this)
         browser.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {

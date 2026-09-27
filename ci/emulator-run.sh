@@ -8,8 +8,8 @@ URL="${1:-}"
 cd "$(dirname "$0")/.." || exit 1
 
 if [ -n "$URL" ]; then
-  echo "== 模式：全功能遍历（Android 16 无头模拟器 + 电脑端公网联调）=="
-  exec bash ci/emulator-traversal.sh "$URL"
+  echo "== 模式：全功能遍历 v2（定位/核验双截图 + CDP 网页断言 + 电脑端公网联调）=="
+  exec bash ci/emulator-traversal.sh "$URL" "${APK:-}"
 fi
 
 echo "== 模式：基础冒烟（未提供 phone_url）=="

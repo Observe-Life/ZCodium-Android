@@ -158,7 +158,7 @@
     return '<button class="zp-ibtn" id="' + id + '" aria-label="' + label + '">' + svg(I[icon]) + '</button>';
   }
   function toolBtn(act, icon, label) {
-    return '<button class="zp-tbtn" data-zp-act="' + act + '">' + svg(I[icon], 19) + '<span>' + label + '</span></button>';
+    return '<button class="zp-tbtn" data-zp-act="' + act + '" aria-label="' + label + '">' + svg(I[icon], 19) + '<span>' + label + '</span></button>';
   }
   function buildChatBar() {
     var bar = document.createElement('div');

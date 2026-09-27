@@ -1,0 +1,37 @@
+# ZCodium 遍历用例表（制表符分隔：组	编号	描述	等待秒	setup	定位	动作	核验）
+# 命令：probe=CDP(web-probe.py) ntext/ntap/ntapc/ntype=原生壳 lcat/lcatneg=日志 back/amstart/focus/svccheck=系统 true=跳过 none=无
+# 定位失败会复位重试3次，仍失败记 BLOCKED；核验=PASS 铁律（截图+数据成对，截图由引擎自动出）。
+A	A1-1	空状态显示ZCodium标题	0	amstart	ntext ZCodium	none	ntext ZCodium
+A	A1-2	空状态显示连接按钮	0	none	ntext 连接	none	ntext 连接
+A	A1-3	空网址点连接被拒	2	none	ntext 连接	ntap 连接	lcat 请输入有效
+A	A1-4	非法地址点连接被拒	2	none	ntext 连接	ntype abc;ntap 连接	lcat 请输入有效
+A	A1-5	固定域名地址连接成功	8	none	ntext 连接	ntapc android.widget.EditText;sleep 1;ntype "$URL";sleep 1;ntap 连接	probe wait '[data-zp-act=hrefresh]' 40
+H	H-B1-1	首页刷新按钮生效	4	none	probe wait '[data-zp-act=hrefresh]' 30	probe tap '[data-zp-act=hrefresh]'	probe assert 刷新后存活 'document.querySelector("[data-zp-act=hrefresh]")?1:0' 25
+H	H-B1-2	首页搜索条打开	2	none	probe wait '[data-zp-act=hrefresh]' 15	probe tap '[data-zp-act=hsearch]'	probe assert 搜索条与占位符 'document.getElementById("zp-searchbar")&&document.querySelector("#zp-searchbar input").placeholder.includes("搜索会话标题")?1:0' 10
+H	H-B1-3	关闭搜索条	2	none	probe wait '#zp-searchbar' 10	probe tap '#zp-searchbar [aria-label=关闭搜索]'	probe assert 关闭后首页存活 'document.querySelector("[data-zp-act=hrefresh]")?1:0' 12
+H	H-B1-4	新建入口打开新建视图	10	none	probe wait '[data-zp-act=hrefresh]' 20	probe tap '[data-zp-act=hnew]'	probe assert 新建视图或会话 'document.body.innerText.includes("了解这个项目")||document.querySelector("section[data-mobile-page=chat]")?1:0' 30
+H	H-B1-5	新建视图返回首页	8	none	probe wait '[data-zp-act=hrefresh]' 30	none	probe wait '[data-zp-act=hrefresh]' 25
+H	H-B1-6	远控打开原生对话框	3	none	probe wait '[data-zp-act=remote]' 15	probe tap '[data-zp-act=remote]'	ntext 远程控制
+H	H-B1-7	远控对话框取消关闭	2	none	ntext 远程控制	ntap 取消	probe wait '[data-zp-act=hrefresh]' 20
+H	H-B1-8	主题切换整页重载存活	0	none	probe wait '[data-zp-act=hrefresh]' 20	probe tap '[data-zp-act=theme]'	probe wait '[data-zp-act=hrefresh]' 45
+H	H-B1-9	主题切回	0	none	probe wait '[data-zp-act=hrefresh]' 30	probe tap '[data-zp-act=theme]'	probe wait '[data-zp-act=hrefresh]' 45
+D	D-1	会话列表非空与电脑端同源	0	none	probe wait '[data-zp-act=hrefresh]' 20	none	probe assert 会话数至少1 'document.querySelectorAll("[data-session-id]").length>=1?1:0' 25
+W	W-1	点第一条任务进入会话	12	none	probe wait '[data-zp-act=hrefresh]' 20	probe click '[data-session-id]'	probe wait '[data-zp-act=nav]' 30
+W	W-2	会话工具栏五钮齐全	0	none	probe wait '[data-zp-act=nav]' 20	none	probe assert 钮数量至少5 'document.querySelectorAll("[data-zp-act]").length>=5?1:0' 8
+C2	C2-1	聊天栏标题非空	0	none	probe wait '#zp-title' 15	none	probe assert 标题非空 'document.getElementById("zp-title").textContent.trim().length>0?1:0' 8
+W	W-3	侧栏展开	3	none	probe wait '[data-zp-act=side]' 10	probe tap '[data-zp-act=side]'	probe assert 侧栏页签存在 'document.getElementById("zp-tabs")?1:0' 10
+W	W-4	侧栏收起	3	none	probe wait '[data-zp-act=side]' 10	probe tap '[data-zp-act=side]'	probe assert 页面存活 'document.querySelector("[data-zp-act=nav]")?1:0' 10
+W	W-5	导航页签内容	2	none	probe wait '[data-zp-act=nav]' 10	probe tap '[data-zp-act=nav]'	probe assert 导航面板或空态 'document.querySelector(".zp-nav")||document.body.innerText.includes("暂无可导航的问答")?1:0' 10
+W	W-6	产物页签	2	none	probe wait '[data-zp-act=artifact]' 10	probe tap '[data-zp-act=artifact]'	probe assert 产物页签内容 'document.body.innerText.includes("静态结构演示")||document.querySelector("[data-zp-file]")?1:0' 10
+W	W-7	会话内搜索条	3	none	probe wait '[data-zp-act=search]' 10	probe tap '[data-zp-act=search]'	probe assert 会话搜索占位符 'document.getElementById("zp-searchbar")&&document.querySelector("#zp-searchbar input").placeholder.includes("在会话中搜索")?1:0' 10
+W	W-8	搜索词高亮与关闭	3	none	probe wait '#zp-searchbar' 10	probe type '#zp-searchbar input' '默认';probe tap '#zp-searchbar [aria-label=关闭搜索]'	probe assert 关闭后存活 'document.querySelector("[data-zp-act=nav]")?1:0' 10
+C2	C2-2	更多菜单弹出	3	none	probe wait '[data-zp-act=nav]' 15	probe tap '[data-testid=workspace-more-button]'	probe assert 菜单弹层存在 'document.querySelector("[role=menu],[data-radix-menu-content]")?1:0' 8
+C2	C2-3	关闭菜单	2	none	probe wait '[data-testid=workspace-more-button]' 10	back	probe wait '[data-zp-act=nav]' 15
+M	M-1	返回按钮回任务首页	8	none	probe wait '#zp-back' 15	probe tap '#zp-back'	probe wait '[data-zp-act=hrefresh]' 30
+D	D-2	新建会话视图打开	0	none	probe wait '[data-zp-act=hnew]' 20	probe tap '[data-zp-act=hnew]';sleep 12	probe wait 'section[data-mobile-page=chat] textarea' 30
+D	D-3	输入并发送消息	0	none	probe wait 'section[data-mobile-page=chat] textarea' 20	probe type 'section[data-mobile-page=chat] textarea' '你好，云端遍历自动化测试，请只回复一个字：好';probe press 'section[data-mobile-page=chat] textarea'	probe assert 用户消息上屏 'document.querySelectorAll("[class*=user-row]").length>=1?1:0' 60
+D	D-4	助手真实回复到达	0	none	true	none	probe assert 助手回复到达 'document.querySelectorAll("[class*=assistant-row]").length>=1?1:0' 180
+S	S-1	多轮操作后页面存活	3	none	probe wait '[data-zp-act=hrefresh]' 20	none	probe assert 页面ready 'document.readyState=="complete"?1:0' 10
+S	S-3	网页控制台无报错	3	none	true	none	probe errors 4
+S	S-2	全程无崩溃	0	none	true	none	lcatneg
+K	K-1	保活服务在运行	0	none	true	none	svccheck
