@@ -994,7 +994,8 @@ class MainActivity : Activity() {
             } else ""
             runOnUiThread {
                 val effective = when {
-                    target != null -> uri.buildUpon().authority(target).build().toString()
+                    // 解析到当前隧道：主机与 relayOrigin 一并改写，页面后续请求才指向同一地址（r6）。
+                    target != null -> rebuildWithResolvedHost(uri, target)
                     retryCount == 0 && fallback.isNotBlank() -> fallback
                     else -> configuredUrl
                 }
@@ -1002,6 +1003,18 @@ class MainActivity : Activity() {
                 browser.loadUrl(effective)
             }
         }.start()
+    }
+
+    /** 主机改写 + relayOrigin 同步改写：隧道换址后页面仍自洽（先清空 query 再按原参数重放）。 */
+    private fun rebuildWithResolvedHost(uri: Uri, host: String): String {
+        val origin = "https://$host"
+        val rebuilt = uri.buildUpon().authority(host).clearQuery()
+        for (key in uri.queryParameterNames) {
+            if (key == "relayOrigin") continue
+            for (value in uri.getQueryParameters(key)) rebuilt.appendQueryParameter(key, value)
+        }
+        rebuilt.appendQueryParameter("relayOrigin", origin)
+        return rebuilt.build().toString()
     }
 
     private fun isDiscoveryCandidate(host: String): Boolean {
