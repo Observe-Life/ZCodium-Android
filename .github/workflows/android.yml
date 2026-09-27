@@ -7,6 +7,11 @@ on:
       - '.github/**'
       - '*.md'
   workflow_dispatch:
+    inputs:
+      phone_url:
+        description: '手机待填网址（带令牌）；填写后跑全功能遍历，留空则只跑基础冒烟'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -24,7 +29,6 @@ jobs:
       - name: Accept Android SDK licenses and install API 36
         run: |
           SDKMGR=$(ls $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | head -1)
-          echo "sdkmanager=$SDKMGR"
           yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
           "$SDKMGR" "platform-tools" "platforms;android-36" "build-tools;36.0.0" > /dev/null
           echo "sdk ready"
@@ -37,11 +41,9 @@ jobs:
           set -e
           keytool -genkeypair -v -keystore ci.keystore -alias ci -keyalg RSA -keysize 2048 -validity 10000 -storepass zcodium -keypass zcodium -dname CN=ZCodium,O=ZCodium,C=CN
           UNSIGNED=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
-          echo "unsigned=$UNSIGNED"
           BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
           $BT/zipalign -f -p 4 $UNSIGNED app-aligned.apk
           $BT/apksigner sign --ks ci.keystore --ks-pass pass:zcodium --key-pass pass:zcodium --out ZCodium.apk app-aligned.apk
-          $BT/apksigner verify --print-certs ZCodium.apk | head -3
           ls -la ZCodium.apk
       - uses: actions/upload-artifact@v4
         with:
@@ -50,10 +52,11 @@ jobs:
           retention-days: 30
 
   emulator-test:
-    name: Headless emulator smoke test
+    name: Headless emulator test (Android 16)
     runs-on: ubuntu-latest
     needs: build
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: ZCodium-apk
@@ -62,7 +65,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Run emulator smoke test
+      - name: Run emulator test
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
@@ -73,17 +76,23 @@ jobs:
           disable-animations: true
           script: |
             mkdir -p screenshots
-            adb install -r ZCodium.apk
-            adb shell am start -W -n app.zcodium.remote/.MainActivity
-            sleep 12
-            adb shell pidof app.zcodium.remote || (adb logcat -d -t 300; exit 1)
-            adb exec-out screencap -p > screenshots/01-main.png
-            adb shell am start -a android.intent.action.VIEW -d 'zcode://session?sess=smoke' -n app.zcodium.remote/.MainActivity
-            sleep 6
-            adb exec-out screencap -p > screenshots/02-deeplink.png
-            adb shell dumpsys activity activities | grep -i mResumedActivity || true
-            adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime: process: app.zcodium.remote' && (echo 'crash detected'; exit 1) || echo 'no crash'
-            echo 'emulator smoke test passed'
+            PHONE_URL="${{ github.event.inputs.phone_url }}"
+            if [ -n "$PHONE_URL" ]; then
+              echo "== 全功能遍历（含与电脑端公网联调）=="
+              bash ci/emulator-traversal.sh "$PHONE_URL"
+            else
+              echo "== 基础冒烟（未提供 phone_url）=="
+              adb install -r ZCodium.apk
+              adb shell am start -W -n app.zcodium.remote/.MainActivity
+              sleep 12
+              adb shell pidof app.zcodium.remote || (adb logcat -d -t 300; exit 1)
+              adb exec-out screencap -p > screenshots/01-main.png
+              adb shell am start -a android.intent.action.VIEW -d 'zcode://session?sess=smoke' -n app.zcodium.remote/.MainActivity
+              sleep 6
+              adb exec-out screencap -p > screenshots/02-deeplink.png
+              adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime: process: app.zcodium.remote' && (echo 'crash detected'; exit 1) || echo 'no crash'
+              echo 'smoke passed'
+            fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
