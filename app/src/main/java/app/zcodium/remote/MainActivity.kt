@@ -1057,7 +1057,7 @@ class MainActivity : Activity() {
         const val PATCH_CSS_PATH = "/remote/v4/assets/__zp_patch__.css"
         /* 宿主无关（custom）：自有域名/隧道地址/LAN 与官方域名走同一条补丁+本地快照通路 */
         val MAIN_FRAME_PATTERN: Pattern =
-            Pattern.compile("^https://[^/]+/remote/v4(\\?|$)")
+            Pattern.compile("^https://[^/]+/(?:remote/v4|web-remote)(\\?|$)")
         /* 随 App 打包的官方页面快照（2026-09-26 当前线上版，与桥托管页面同代际） */
         const val SNAPSHOT_DIR = "remote_v4"
         const val SNAPSHOT_INDEX = "index-B-ilXaCQ.js"
