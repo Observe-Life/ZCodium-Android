@@ -138,8 +138,19 @@ class MainActivity : Activity() {
             browser.visibility = View.VISIBLE
             pageLoaded = true
         } else {
-            val saved = prefs.getString(KEY_REMOTE_URL, "").orEmpty()
-            if (saved.isNotBlank()) connect(saved) else showEmptyState()
+            /* 仅调试包：CI 遍历测试钩子——adb 以 --es zc_test_url <网址> 启动即预填并连接，
+               绕开 input text/坐标点击的不确定性；正式包不带此入口 */
+            val testUrl = if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+                intent?.getStringExtra("zc_test_url")
+            } else null
+            if (!testUrl.isNullOrBlank()) {
+                Log.i(TAG, "test-hook connect:$testUrl")
+                emptyInput.setText(testUrl)
+                connect(testUrl)
+            } else {
+                val saved = prefs.getString(KEY_REMOTE_URL, "").orEmpty()
+                if (saved.isNotBlank()) connect(saved) else showEmptyState()
+            }
         }
         /* 推送通知点击冷启动：把目标会话记下来，等页面就绪后再打开 */
         handleDeepLink(intent)

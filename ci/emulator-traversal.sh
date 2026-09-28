@@ -64,9 +64,12 @@ probe() { python3 ci/web-probe.py "$@"; }
 # ---------- L3 系统旁证 ----------
 back() { adb shell input keyevent 4 >/dev/null 2>&1; sleep 1; }
 amstart() { adb shell am start -W -n app.zcodium.remote/.MainActivity >/dev/null 2>&1; sleep 4; }
+# 调试包测试钩子：-S 先停进程再带 zc_test_url 启动，确保 onCreate 读到 extra（复用实例不会触发）
+amstart_url() { adb shell "am start -S -n app.zcodium.remote/.MainActivity --es zc_test_url '$1'" >/dev/null 2>&1; sleep 6; }
 focus() { adb shell dumpsys window 2>/dev/null | grep -q 'mCurrentFocus.*zcodium.remote'; }
-lcat() { adb logcat -d -t 500 | grep -qF "$1"; }
-lcatneg() { ! adb logcat -d -t 800 | grep -qE "FATAL EXCEPTION|AndroidRuntime: process: app.zcodium.remote"; }
+# 全量 logcat 落盘（模拟器系统日志极密，-t 窗口只覆盖一两秒，toast/崩溃断言会漏检）
+lcat() { grep -aqF "$1" "$SHOTS/logcat-full.txt"; }
+lcatneg() { ! grep -aqE "FATAL EXCEPTION|AndroidRuntime: process: app.zcodium.remote" "$SHOTS/logcat-full.txt"; }
 svccheck() { adb shell dumpsys activity services app.zcodium.remote 2>/dev/null | grep -q zcodium.remote; }
 
 reset_ui() {
@@ -89,6 +92,9 @@ python3 -c "import websocket" 2>/dev/null || pip3 install --quiet websocket-clie
 say "安装包=$APK 待填网址=$URL"
 adb install -r "$APK" >/dev/null 2>&1 || { echo "[FAIL] APK 安装失败"; exit 1; }
 adb shell pm clear app.zcodium.remote >/dev/null 2>&1
+adb logcat -c >/dev/null 2>&1
+adb logcat -v time > "$SHOTS/logcat-full.txt" 2>&1 &
+LOGCAT_PID=$!
 amstart
 
 # ---------- 主循环：逐条用例 ----------
@@ -136,6 +142,7 @@ if [ "$TOTAL" -ne "$EXPECTED" ]; then
 fi
 
 # ---------- 收尾 ----------
+kill "$LOGCAT_PID" 2>/dev/null || true
 echo "== 崩溃终检 =="
 if lcatneg; then echo "[S-0] STAGE=verify 实测=[clean] 判定=PASS"; else
   FAILN=$((FAILN+1)); echo "[S-0] STAGE=verify 实测=[crash found] 判定=FAIL"

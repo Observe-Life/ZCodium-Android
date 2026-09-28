@@ -5,7 +5,8 @@ A	A1-1	空状态显示ZCodium标题	0	amstart	ntext ZCodium	none	ntext ZCodium
 A	A1-2	空状态显示连接按钮	0	none	ntext 连接	none	ntext 连接
 A	A1-3	空网址点连接被拒	2	none	ntext 连接	ntap 连接	lcat 请输入有效
 A	A1-4	非法地址点连接被拒	2	none	ntext 连接	ntype abc;ntap 连接	lcat 请输入有效
-A	A1-5	固定域名地址连接成功	8	none	ntext 连接	ntapc android.widget.EditText;sleep 1;ntype "$URL";sleep 1;ntap 连接	probe wait '[data-zp-act=hrefresh]' 40
+A	A1-4b	钩子传非法地址被拒	5	none	true	amstart_url abc	lcat 请输入有效
+A	A1-5	固定域名连接成功(调试钩子)	10	none	true	amstart_url "$URL"	probe wait '[data-zp-act=hrefresh]' 45
 H	H-B1-1	首页刷新按钮生效	4	none	probe wait '[data-zp-act=hrefresh]' 30	probe tap '[data-zp-act=hrefresh]'	probe assert 刷新后存活 'document.querySelector("[data-zp-act=hrefresh]")?1:0' 25
 H	H-B1-2	首页搜索条打开	2	none	probe wait '[data-zp-act=hrefresh]' 15	probe tap '[data-zp-act=hsearch]'	probe assert 搜索条与占位符 'document.getElementById("zp-searchbar")&&document.querySelector("#zp-searchbar input").placeholder.includes("搜索会话标题")?1:0' 10
 H	H-B1-3	关闭搜索条	2	none	probe wait '#zp-searchbar' 10	probe tap '#zp-searchbar [aria-label=关闭搜索]'	probe assert 关闭后首页存活 'document.querySelector("[data-zp-act=hrefresh]")?1:0' 12
