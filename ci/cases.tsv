@@ -16,8 +16,8 @@ H	H-B1-6	远控打开原生对话框	3	none	probe wait '[data-zp-act=remote]' 15
 H	H-B1-7	远控对话框取消关闭	2	none	ntext 远程控制	ntap 取消	probe wait '[data-zp-act=hrefresh]' 20
 H	H-B1-8	主题切换整页重载存活	0	none	probe wait '[data-zp-act=hrefresh]' 20	probe tap '[data-zp-act=theme]'	probe wait '[data-zp-act=hrefresh]' 45
 H	H-B1-9	主题切回	0	none	probe wait '[data-zp-act=hrefresh]' 30	probe tap '[data-zp-act=theme]'	probe wait '[data-zp-act=hrefresh]' 45
-D	D-1	会话列表非空与电脑端同源	0	none	probe wait '[data-zp-act=hrefresh]' 20	none	probe assert 会话数至少1 'document.querySelectorAll("[data-session-id]").length>=1?1:0' 25
-W	W-1	点第一条任务进入会话	12	none	probe wait '[data-zp-act=hrefresh]' 20	probe click '[data-session-id]'	probe wait '[data-zp-act=nav]' 30
+D	D-1	会话列表非空与电脑端同源	0	none	probe wait '[data-zp-act=hrefresh]' 20	none	probe assert 会话数至少1 'document.querySelectorAll("[data-testid^=task-item-]").length>=1?1:0' 25
+W	W-1	点第一条任务进入会话	12	none	probe wait '[data-zp-act=hrefresh]' 20	probe click '[data-testid^=task-item-]'	probe wait '[data-zp-act=nav]' 30
 W	W-2	会话工具栏五钮齐全	0	none	probe wait '[data-zp-act=nav]' 20	none	probe assert 钮数量至少5 'document.querySelectorAll("[data-zp-act]").length>=5?1:0' 8
 C2	C2-1	聊天栏标题非空	0	none	probe wait '#zp-title' 15	none	probe assert 标题非空 'document.getElementById("zp-title").textContent.trim().length>0?1:0' 8
 W	W-3	侧栏展开	3	none	probe wait '[data-zp-act=side]' 10	probe tap '[data-zp-act=side]'	probe assert 侧栏页签存在 'document.getElementById("zp-tabs")?1:0' 10
