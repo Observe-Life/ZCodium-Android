@@ -175,20 +175,89 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
         } catch (_: Exception) { }
     }
 
-    // ── WebSocket 转发（裸流透传，带重试） ───────────────────────────────
+    // ── WebSocket 转发（裸流透传 + 上游透明重连） ───────────────────────
+    /**
+     * 页面侧的 socket 始终由本层保持；上游（隧道那一段）断开时，本层**在页面无感的情况下重连上游**
+     * （重新握手、继续透传），所以公网抖动不会让页面看到"连接关闭"——这是"前台持续不断"的关键。
+     * 只有页面自己关闭时，才真正收尾。
+     */
     private fun proxyWebSocket(
         client: Socket, cin: BufferedInputStream, method: String,
         path: String, headers: List<Pair<String, String>>
     ): Socket? {
-        var upstream: SSLSocket? = null
+        val clientOut = BufferedOutputStream(client.getOutputStream())
+        val hold = UpstreamHolder()
+        val clientAlive = java.util.concurrent.atomic.AtomicBoolean(true)
+
+        // 页面 → 上游：只跑一次；写到"当前上游"，上游重连期间丢弃瞬时字节（极少）
+        val upPump = Thread {
+            val buf = ByteArray(16 * 1024)
+            try {
+                while (true) {
+                    val n = cin.read(buf)
+                    if (n < 0) break
+                    val out = hold.out
+                    if (out != null) {
+                        try { out.write(buf, 0, n); out.flush() } catch (_: Exception) { }
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                clientAlive.set(false)
+                hold.closeQuietly()
+            }
+        }
+        upPump.start()
+
+        // 上游 → 页面：上游断了就重连（页面无感），直到页面侧结束
+        var reconnects = 0
+        val downBuf = ByteArray(16 * 1024)
+        while (clientAlive.get() && reconnects <= MAX_WS_RECONNECTS) {
+            val up = connectUpstream()
+            if (up == null) {
+                reconnects++
+                Log.w(tag, "forward ws upstream connect failed (attempt $reconnects)")
+                sleepQuiet(800)
+                continue
+            }
+            if (!hold.install(up, method, path, headers, upstreamHost)) {
+                Log.w(tag, "forward ws handshake write failed")
+                try { up.close() } catch (_: Exception) { }
+                reconnects++
+                sleepQuiet(800)
+                continue
+            }
+            if (reconnects > 0) Log.i(tag, "forward ws upstream reconnected (第 $reconnects 次), 页面无感")
+            try {
+                val uin = up.getInputStream()
+                while (true) {
+                    val n = uin.read(downBuf)
+                    if (n < 0) throw java.io.EOFException("upstream eof")
+                    clientOut.write(downBuf, 0, n)
+                    clientOut.flush()
+                }
+            } catch (e: Exception) {
+                if (!clientAlive.get()) break
+                Log.w(tag, "forward ws upstream dropped: ${e.message} — 尝试重连（页面无感）")
+                hold.clear()
+                reconnects++
+                sleepQuiet(500)
+            }
+        }
+        hold.closeQuietly()
+        Log.i(tag, "forward ws closed (client side ended): $path")
+        return null
+    }
+
+    /** 建立到隧道的 TLS 连接（带 SNI 与重试）。 */
+    private fun connectUpstream(): SSLSocket? {
         var attempt = 0
-        while (attempt < MAX_ATTEMPTS && upstream == null) {
+        while (attempt < MAX_ATTEMPTS) {
             attempt++
             try {
                 val s = sslFactory.createSocket() as SSLSocket
                 s.connect(InetSocketAddress(upstreamHost, 443), CONNECT_TIMEOUT_MS)
-                /* 必须显式设置 SNI（serverName）：无 SNI 时 Cloudflare 边缘认不出目标隧道 → 直接重置连接
-                   （实测：HTTP 用 HttpURLConnection 自动带 SNI 所以通，WebSocket 手写握手不带则 6/6 被重置） */
+                /* 必须显式设置 SNI：无 SNI 时 Cloudflare 边缘认不出目标隧道 → 直接重置连接 */
                 runCatching {
                     val params = s.sslParameters
                     params.serverNames = listOf(javax.net.ssl.SNIHostName(upstreamHost))
@@ -196,58 +265,46 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
                 }
                 s.soTimeout = 0
                 s.startHandshake()
-                upstream = s
+                return s
             } catch (e: Exception) {
-                Log.w(tag, "forward ws attempt $attempt failed: ${e.message}")
-                sleepQuiet(600)
+                Log.w(tag, "forward ws tls attempt $attempt failed: ${e.message}")
+                sleepQuiet(400)
             }
         }
-        if (upstream == null) {
-            Log.w(tag, "forward ws gave up after $attempt attempts: $path")
-            try { client.getOutputStream().write("HTTP/1.1 502 Bad Gateway\r\n\r\n".toByteArray()) } catch (_: Exception) { }
-            return null
-        }
-        val sb = StringBuilder("$method $path HTTP/1.1\r\n")
-        for ((k, v) in headers) {
-            if (k == "host") continue
-            sb.append(k).append(": ").append(v).append("\r\n")
-        }
-        sb.append("Host: ").append(upstreamHost).append("\r\n\r\n")
-        val uo = BufferedOutputStream(upstream.getOutputStream())
-        uo.write(sb.toString().toByteArray(Charsets.ISO_8859_1))
-        uo.flush()
-
-        /* 长连接期间两个方向都不设超时；任一侧读到结尾只做"半关闭"（shutdownOutput），
-           等两个方向都结束才整体收尾——否则会把正常长连接误关掉（实测 3 秒即断的根因）。 */
-        client.soTimeout = 0
-        upstream.soTimeout = 0
-        val t1 = Thread { pipe(upstream.getInputStream(), client.getOutputStream(), client, "s2c") }
-        val t2 = Thread { pipe(cin, upstream.getOutputStream(), upstream, "c2s") }
-        t1.start(); t2.start()
-        t1.join(); t2.join()
-        Log.i(tag, "forward ws closed: $path")
-        return upstream
+        return null
     }
 
-    private fun pipe(from: InputStream, to: OutputStream, socketForHalfClose: Socket, dir: String) {
-        val buf = ByteArray(16 * 1024)
-        var total = 0L
-        try {
-            while (true) {
-                val n = from.read(buf)
-                if (n < 0) break
-                to.write(buf, 0, n)
-                if (n < buf.size) to.flush()
-                total += n
+    /** 当前上游的持有者：供"页面→上游"方向随时取到最新连接。 */
+    private class UpstreamHolder {
+        @Volatile var out: OutputStream? = null
+        @Volatile private var socket: SSLSocket? = null
+
+        fun install(s: SSLSocket, method: String, path: String, headers: List<Pair<String, String>>, host: String): Boolean {
+            return try {
+                val sb = StringBuilder("$method $path HTTP/1.1\r\n")
+                for ((k, v) in headers) {
+                    if (k == "host") continue
+                    sb.append(k).append(": ").append(v).append("\r\n")
+                }
+                sb.append("Host: ").append(host).append("\r\n\r\n")
+                val o = BufferedOutputStream(s.getOutputStream())
+                o.write(sb.toString().toByteArray(Charsets.ISO_8859_1))
+                o.flush()
+                socket = s
+                out = o
+                true
+            } catch (e: Exception) {
+                false
             }
-        } catch (e: Exception) {
-            Log.i(tag, "forward ws pipe $dir error: ${e.message}")
-        } finally {
-            Log.i(tag, "forward ws pipe $dir end bytes=$total")
-            try { to.flush() } catch (_: Exception) { }
-            /* 半关闭：告诉对端"这个方向没有更多数据了"，另一个方向继续，直到它也结束 */
-            try { socketForHalfClose.shutdownOutput() } catch (_: Exception) { }
         }
+
+        fun clear() {
+            out = null
+            try { socket?.close() } catch (_: Exception) { }
+            socket = null
+        }
+
+        fun closeQuietly() = clear()
     }
 
     private fun sleepQuiet(ms: Long) { try { Thread.sleep(ms) } catch (_: InterruptedException) { } }
@@ -255,6 +312,8 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
     companion object {
         /* 直连 CF 边缘实测失败率约 60%：6 次重试把成功率抬到 ~99.9% */
         private const val MAX_ATTEMPTS = 6
+        /* WebSocket 上游断线后的最大重连次数（页面无感续连；远超此数视为长时间断网，交给页面处理） */
+        private const val MAX_WS_RECONNECTS = 120
         private const val CONNECT_TIMEOUT_MS = 6000
         private const val READ_TIMEOUT_MS = 20000
         private val HOP_HEADERS = setOf(

@@ -416,9 +416,11 @@ class MainActivity : Activity() {
                 android.text.InputType.TYPE_TEXT_VARIATION_URI
             isSingleLine = true
             setSelectAllOnFocus(true)
-            setText(currentUrl().ifBlank {
+            /* 优先显示"用户自己填的远控网址"（隧道/固定域名），绝不显示 App 内部的本机转发地址 */
+            setText(
                 getPreferences(MODE_PRIVATE).getString(KEY_REMOTE_URL, "").orEmpty()
-            })
+                    .ifBlank { currentUrl() }
+            )
         }
         AlertDialog.Builder(this)
             .setTitle(R.string.remote_control)
