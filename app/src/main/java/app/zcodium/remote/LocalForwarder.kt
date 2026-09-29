@@ -187,6 +187,13 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
             try {
                 val s = sslFactory.createSocket() as SSLSocket
                 s.connect(InetSocketAddress(upstreamHost, 443), CONNECT_TIMEOUT_MS)
+                /* 必须显式设置 SNI（serverName）：无 SNI 时 Cloudflare 边缘认不出目标隧道 → 直接重置连接
+                   （实测：HTTP 用 HttpURLConnection 自动带 SNI 所以通，WebSocket 手写握手不带则 6/6 被重置） */
+                runCatching {
+                    val params = s.sslParameters
+                    params.serverNames = listOf(javax.net.ssl.SNIHostName(upstreamHost))
+                    s.sslParameters = params
+                }
                 s.soTimeout = 0
                 s.startHandshake()
                 upstream = s
