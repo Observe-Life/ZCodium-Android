@@ -539,10 +539,15 @@ class MainActivity : Activity() {
                 val url = request.url
                 val scheme = url.scheme ?: return true
                 val host = url.host ?: ""
-                /* 回答里的外链一律跳系统浏览器；Remote 主站（官方或本机配置的主机）仍在 App 内打开 */
+                /* 回答里的外链一律跳系统浏览器；Remote 主站仍在 App 内打开。
+                   注意：页面实际跑在隧道主机上（≠ 用户填的固定域名），必须把"当前页面主机"也算站内，
+                   否则页面内的重试/刷新等跳转会被当成外链抛给手机浏览器（2026-09-29 实测）。 */
                 val configuredHost = runCatching { Uri.parse(configuredRemoteUrl()).host }.getOrNull().orEmpty()
+                val currentHost = runCatching { Uri.parse(view.url.orEmpty()).host }.getOrNull().orEmpty()
                 val isRemote = host.equals("zcode.z.ai", true) ||
-                    (configuredHost.isNotEmpty() && host.equals(configuredHost, true))
+                    (configuredHost.isNotEmpty() && host.equals(configuredHost, true)) ||
+                    (currentHost.isNotEmpty() && host.equals(currentHost, true)) ||
+                    host.endsWith(".trycloudflare.com", true)
                 val isHttp = scheme.equals("https", true) || scheme.equals("http", true)
                 if (isHttp && !isRemote) {
                     return try {
