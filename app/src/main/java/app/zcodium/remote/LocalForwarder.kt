@@ -134,8 +134,12 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
                 conn.instanceFollowRedirects = false
                 for ((k, v) in headers) {
                     if (k in HOP_HEADERS || k == "host") continue
+                    /* 不透传 accept-encoding：HttpURLConnection 只在它自己加压缩头时才自动解压，
+                       我们手动转发压缩头会导致上游回 gzip、又被当纯文本交给页面（实测乱码）。 */
+                    if (k == "accept-encoding") continue
                     try { conn.setRequestProperty(k, v) } catch (_: Exception) { }
                 }
+                try { conn.setRequestProperty("Accept-Encoding", "identity") } catch (_: Exception) { }
                 if (body.isNotEmpty()) {
                     conn.doOutput = true
                     conn.outputStream.use { it.write(body) }
