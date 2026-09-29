@@ -190,6 +190,31 @@ def cmd_press(c, sel):
     return 0 if v else 3
 
 
+def cmd_errors(c, sec):
+    c.cmd("Runtime.enable")
+    c.cmd("Log.enable")
+    msgs = []
+    c.ws.settimeout(1)
+    deadline = time.time() + float(sec)
+    while time.time() < deadline:
+        try:
+            m = json.loads(c.ws.recv())
+        except Exception:
+            continue
+        met = m.get("method") or ""
+        p = m.get("params") or {}
+        if met == "Runtime.consoleAPICalled" and p.get("type") == "error":
+            msgs.append(" ".join(str(a.get("value") or a.get("description") or "?") for a in p.get("args", []))[:200])
+        elif met == "Runtime.exceptionThrown":
+            msgs.append(str((p.get("exceptionDetails") or {}).get("text", ""))[:200])
+        elif met == "Log.entryAdded" and (p.get("entry") or {}).get("level") == "error":
+            msgs.append(str(p["entry"].get("text", ""))[:200])
+    print("errors=%s" % len(msgs))
+    for x in msgs[:3]:
+        print("ERR " + x)
+    return 0 if not msgs else 1
+
+
 def cmd_url(c):
     print(c.evaluate("location.href"))
     return 0
