@@ -68,6 +68,9 @@ class MainActivity : Activity() {
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var pageLoaded = false
 
+    /** HTML 里是否已随页面注入补丁；没注入时页面加载完由 App 后置注入（直连不稳时 WebView 自己加载也能有工具栏） */
+    private var patchInjectedWithHtml = false
+
     /** 最近一次主文档加载是否失败；只有它才允许触发自动重载 */
     private var loadFailed = false
     private var networkAvailable = true
@@ -599,6 +602,7 @@ class MainActivity : Activity() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 pageLoaded = false
                 loadFailed = false
+                patchInjectedWithHtml = false
                 errorText.visibility = View.GONE
                 browser.visibility = View.VISIBLE
             }
@@ -609,6 +613,11 @@ class MainActivity : Activity() {
                 reloadWhenOnline = false
                 if (!url.isNullOrBlank() && url.contains("/remote/v4")) {
                     getPreferences(MODE_PRIVATE).edit().putString(KEY_LAST_EFFECTIVE, url).apply()
+                }
+                /* 后置注入：这次页面是 WebView 自己加载的（Java 抓取失败），补丁没进 HTML——
+                   直接把补丁脚本与样式注入页面，工具栏/搜索/侧栏等能力照样可用 */
+                if (!patchInjectedWithHtml && !url.isNullOrBlank()) {
+                    injectPatchPostLoad()
                 }
             }
 
@@ -648,23 +657,44 @@ class MainActivity : Activity() {
 
     /** 拉取官方 HTML 入口并在 </head> 前注入补丁引用；失败时返回 null 走原版加载。 */
     private fun fetchPatchedHtml(url: String): WebResourceResponse? {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        try {
-            conn.connectTimeout = 15000
-            conn.readTimeout = 20000
-            conn.instanceFollowRedirects = true
-            conn.setRequestProperty("Accept-Encoding", "identity")
-            CookieManager.getInstance().getCookie(url)?.let { conn.setRequestProperty("Cookie", it) }
-            conn.setRequestProperty("User-Agent", cachedUserAgent)
-            val code = conn.responseCode
-            Log.i(TAG, "fetch HTML response code: $code, final URL: ${conn.url}")
-            if (code !in 200..299) return null
-            val body = conn.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
-            Log.i(TAG, "HTML length: ${body.length}, has </head>: ${body.contains("</head>", true)}")
-            if (!body.contains("</head>", ignoreCase = true)) {
-                return WebResourceResponse("text/html", "utf-8", ByteArrayInputStream(body.toByteArray(Charsets.UTF_8)))
+        /* 多次重试 + 短超时：直连 Cloudflare 边缘存在间歇性重置，
+           单次失败就放弃会让整页打不开；连不上时由 WebView 自己再试一次（Chromium 会换 IP/走 HTTP2） */
+        var body: String? = null
+        var lastErr: String? = null
+        for (attempt in 1..FETCH_ATTEMPTS) {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            try {
+                conn.connectTimeout = 8000
+                conn.readTimeout = 12000
+                conn.instanceFollowRedirects = true
+                conn.setRequestProperty("Accept-Encoding", "identity")
+                CookieManager.getInstance().getCookie(url)?.let { conn.setRequestProperty("Cookie", it) }
+                conn.setRequestProperty("User-Agent", cachedUserAgent)
+                val code = conn.responseCode
+                Log.i(TAG, "fetch HTML attempt=$attempt response code: $code, final URL: ${conn.url}")
+                if (code in 200..299) {
+                    body = conn.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
+                    break
+                }
+                lastErr = "http $code"
+            } catch (e: Exception) {
+                lastErr = e.message
+                Log.w(TAG, "fetch HTML attempt=$attempt failed: ${e.message}")
+            } finally {
+                conn.disconnect()
             }
-            val patched = body.replaceFirst(
+            if (attempt < FETCH_ATTEMPTS) try { Thread.sleep(700) } catch (_: InterruptedException) { }
+        }
+        val html = body ?: run {
+            Log.w(TAG, "fetch HTML gave up after $FETCH_ATTEMPTS attempts: $lastErr（交给 WebView 自行加载）")
+            return null
+        }
+        try {
+            Log.i(TAG, "HTML length: ${html.length}, has </head>: ${html.contains("</head>", true)}")
+            if (!html.contains("</head>", ignoreCase = true)) {
+                return WebResourceResponse("text/html", "utf-8", ByteArrayInputStream(html.toByteArray(Charsets.UTF_8)))
+            }
+            val patched = html.replaceFirst(
                 Regex("</head>", RegexOption.IGNORE_CASE),
                 """<link rel="stylesheet" href="$PATCH_CSS_PATH"/><script src="$PATCH_JS_PATH"></script></head>"""
             )
@@ -682,17 +712,35 @@ class MainActivity : Activity() {
                 "patch injected, patched length: ${patched.length}, " +
                     "pinned index: ${pinned != patched} -> $SNAPSHOT_INDEX"
             )
+            patchInjectedWithHtml = true
             return WebResourceResponse(
                 "text/html", "utf-8", ByteArrayInputStream(pinned.toByteArray(Charsets.UTF_8))
             )
         } finally {
-            conn.disconnect()
+            // 连接已在循环内关闭
         }
     }
 
     private fun assetResponse(name: String, mime: String): WebResourceResponse {
         val stream = assets.open(name)
         return WebResourceResponse(mime, "utf-8", stream)
+    }
+
+    /** 后置注入补丁：直接读 assets 里的补丁脚本/样式注入当前页面（不依赖 HTML 改写，直连不稳时的兜底）。 */
+    private fun injectPatchPostLoad() {
+        try {
+            val js = assets.open("zcode-patch.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val css = assets.open("zcode-patch.css").bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val cssJs = "(function(){try{if(document.querySelector('style[data-zp-css]'))return;" +
+                "var s=document.createElement('style');s.setAttribute('data-zp-css','1');" +
+                "s.textContent=" + org.json.JSONObject.quote(css) + ";" +
+                "(document.head||document.documentElement).appendChild(s);}catch(e){}})()"
+            browser.evaluateJavascript(cssJs, null)
+            browser.evaluateJavascript(js, null)
+            Log.i(TAG, "patch post-injected js=${js.length} css=${css.length}")
+        } catch (e: Exception) {
+            Log.w(TAG, "patch post-inject failed: ${e.message}")
+        }
     }
 
     /** 从随包携带的页面快照里取资源；没有这个文件就返回 null，由系统回源到线上。 */
@@ -1011,14 +1059,14 @@ class MainActivity : Activity() {
         }
         Thread {
             val target = resolveTunnelHost(host)
-            val fallback = if (target == null) {
-                getPreferences(MODE_PRIVATE).getString(KEY_LAST_EFFECTIVE, "").orEmpty()
-            } else ""
+            /* 解析不到当前隧道时，优先落在"上次成功的隧道地址"——它通常仍可用；
+               绝不再退回固定域名：实测手机侧 qnszyg.de5.net 无法解析，等于必然失败。 */
+            val fallback = getPreferences(MODE_PRIVATE).getString(KEY_LAST_EFFECTIVE, "").orEmpty()
             runOnUiThread {
                 val effective = when {
                     // 解析到当前隧道：主机与 relayOrigin 一并改写，页面后续请求才指向同一地址（r6）。
                     target != null -> rebuildWithResolvedHost(uri, target)
-                    retryCount == 0 && fallback.isNotBlank() -> fallback
+                    fallback.isNotBlank() -> fallback
                     else -> configuredUrl
                 }
                 Log.i(TAG, "discovery: host=$host tunnel=$target retry=$retryCount -> $effective")
@@ -1084,6 +1132,8 @@ class MainActivity : Activity() {
         const val KEY_RESTORE_VERSION = "restore_version"
         const val KEY_LAST_EFFECTIVE = "last_effective_url"
         const val MAX_MAIN_FRAME_RETRY = 2
+        /* 抓取页面 HTML 的尝试次数（直连 CF 边缘会间歇性重置，单次失败不放弃） */
+        const val FETCH_ATTEMPTS = 3
         const val FILE_CHOOSER_REQUEST = 4101
         /* Deep Link 打开会话：每次重试间隔 / 最大重试次数（约 18 秒内等页面就绪） */
         const val DEEPLINK_RETRY_MS = 700L
