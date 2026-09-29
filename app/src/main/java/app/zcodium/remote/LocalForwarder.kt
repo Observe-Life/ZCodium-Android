@@ -217,27 +217,36 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
         uo.write(sb.toString().toByteArray(Charsets.ISO_8859_1))
         uo.flush()
 
-        val t1 = Thread { pipe(upstream.getInputStream(), client.getOutputStream()) }
-        val t2 = Thread { pipe(cin, upstream.getOutputStream()) }
+        /* 长连接期间两个方向都不设超时；任一侧读到结尾只做"半关闭"（shutdownOutput），
+           等两个方向都结束才整体收尾——否则会把正常长连接误关掉（实测 3 秒即断的根因）。 */
+        client.soTimeout = 0
+        upstream.soTimeout = 0
+        val t1 = Thread { pipe(upstream.getInputStream(), client.getOutputStream(), client, "s2c") }
+        val t2 = Thread { pipe(cin, upstream.getOutputStream(), upstream, "c2s") }
         t1.start(); t2.start()
         t1.join(); t2.join()
+        Log.i(tag, "forward ws closed: $path")
         return upstream
     }
 
-    private fun pipe(from: InputStream, to: OutputStream) {
+    private fun pipe(from: InputStream, to: OutputStream, socketForHalfClose: Socket, dir: String) {
         val buf = ByteArray(16 * 1024)
+        var total = 0L
         try {
             while (true) {
                 val n = from.read(buf)
                 if (n < 0) break
                 to.write(buf, 0, n)
                 if (n < buf.size) to.flush()
+                total += n
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.i(tag, "forward ws pipe $dir error: ${e.message}")
         } finally {
+            Log.i(tag, "forward ws pipe $dir end bytes=$total")
             try { to.flush() } catch (_: Exception) { }
-            try { to.close() } catch (_: Exception) { }
-            try { from.close() } catch (_: Exception) { }
+            /* 半关闭：告诉对端"这个方向没有更多数据了"，另一个方向继续，直到它也结束 */
+            try { socketForHalfClose.shutdownOutput() } catch (_: Exception) { }
         }
     }
 
