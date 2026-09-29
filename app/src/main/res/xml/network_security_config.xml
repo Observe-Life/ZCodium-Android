@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 明文策略：默认全禁；仅放行本机回环 127.0.0.1 / localhost——
+     App 的"本地转发层"在回环上跑，页面只连本机，公网仍走 HTTPS 隧道。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

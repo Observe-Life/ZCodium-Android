@@ -71,6 +71,10 @@ class MainActivity : Activity() {
     /** HTML 里是否已随页面注入补丁；没注入时页面加载完由 App 后置注入（直连不稳时 WebView 自己加载也能有工具栏） */
     private var patchInjectedWithHtml = false
 
+    /** 本地转发层：页面只连 127.0.0.1，公网（隧道）那段由它带重试去连（实测直连失败率约 60%） */
+    private var forwarder: LocalForwarder? = null
+    private var forwarderHost: String = ""
+
     /** 最近一次主文档加载是否失败；只有它才允许触发自动重载 */
     private var loadFailed = false
     private var networkAvailable = true
@@ -550,6 +554,7 @@ class MainActivity : Activity() {
                 val isRemote = host.equals("zcode.z.ai", true) ||
                     (configuredHost.isNotEmpty() && host.equals(configuredHost, true)) ||
                     (currentHost.isNotEmpty() && host.equals(currentHost, true)) ||
+                    host.equals("127.0.0.1", true) ||
                     host.endsWith(".trycloudflare.com", true)
                 val isHttp = scheme.equals("https", true) || scheme.equals("http", true)
                 if (isHttp && !isRemote) {
@@ -869,6 +874,9 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
+        try { forwarder?.stop() } catch (_: Exception) { }
+        forwarder = null
+        forwarderHost = ""
         if (::connectivityManager.isInitialized) {
             runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
         }
@@ -1069,8 +1077,8 @@ class MainActivity : Activity() {
             val fallback = getPreferences(MODE_PRIVATE).getString(KEY_LAST_EFFECTIVE, "").orEmpty()
             runOnUiThread {
                 val effective = when {
-                    // 解析到当前隧道：主机与 relayOrigin 一并改写，页面后续请求才指向同一地址（r6）。
-                    target != null -> rebuildWithResolvedHost(uri, target)
+                    // 解析到当前隧道：起本地转发并把页面指向 127.0.0.1（公网那段的抖动由转发层重试兜住）。
+                    target != null -> localForwardUrl(uri, target)
                     fallback.isNotBlank() -> fallback
                     else -> configuredUrl
                 }
@@ -1078,6 +1086,22 @@ class MainActivity : Activity() {
                 browser.loadUrl(effective)
             }
         }.start()
+    }
+
+    /** 起（或复用）本地转发，返回"页面只连本机"的入口地址。 */
+    private fun localForwardUrl(uri: Uri, tunnelHost: String): String {
+        if (forwarder == null || forwarderHost != tunnelHost) {
+            forwarder?.stop()
+            forwarder = LocalForwarder(tunnelHost, TAG)
+            forwarderHost = tunnelHost
+        }
+        val f = forwarder!!
+        val p = if (f.port != 0) f.port else f.start()
+        val token = uri.getQueryParameter("remoteControlToken").orEmpty()
+        val local = "http://127.0.0.1:$p"
+        Log.i(TAG, "local forward ready: $local upstream=$tunnelHost tokenLen=${token.length}")
+        /* relayOrigin 指向本机：页面后续 REST 与两条 WebSocket 全部落在 127.0.0.1，由转发层负责出网 */
+        return "$local/web-remote?remoteControlToken=$token&relayOrigin=${Uri.encode(local)}"
     }
 
     /** 主机改写 + relayOrigin 同步改写：隧道换址后页面仍自洽（先清空 query 再按原参数重放）。 */
@@ -1147,7 +1171,7 @@ class MainActivity : Activity() {
         const val PATCH_CSS_PATH = "/remote/v4/assets/__zp_patch__.css"
         /* 宿主无关（custom）：自有域名/隧道地址/LAN 与官方域名走同一条补丁+本地快照通路 */
         val MAIN_FRAME_PATTERN: Pattern =
-            Pattern.compile("^https://[^/]+/(?:remote/v4|web-remote)(\\?|$)")
+            Pattern.compile("^(?:https?://[^/]+)/(?:remote/v4|web-remote)(\\?|$)")
         /* 随 App 打包的官方页面快照（2026-09-26 当前线上版，与桥托管页面同代际） */
         const val SNAPSHOT_DIR = "remote_v4"
         const val SNAPSHOT_INDEX = "index-B-ilXaCQ.js"
@@ -1160,6 +1184,6 @@ class MainActivity : Activity() {
          * 这里通配该段，兼容无版本段的老路径。
          */
         val ASSET_PATH_PATTERN: Pattern =
-            Pattern.compile("^https://[^/]+/remote/v4/(?:[^/]+/)?assets/([A-Za-z0-9_.-]+)(?:\\?.*)?$")
+            Pattern.compile("^(?:https?://[^/]+)/remote/v4/(?:[^/]+/)?assets/([A-Za-z0-9_.-]+)(?:\\?.*)?$")
     }
 }
