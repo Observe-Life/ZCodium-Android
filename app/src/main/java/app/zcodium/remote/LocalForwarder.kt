@@ -36,13 +36,20 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
         private set
 
     fun start(): Int {
-        val ss = ServerSocket(0, 64, InetAddress.getByName("127.0.0.1"))
+        /* 优先用**固定端口**：页面的 localStorage（主题、上次会话等）按"来源"隔离，
+           端口每次随机变化会被当成新站点、设置全部丢失（实测：浅色主题重开变回深色）。
+           固定端口被占用时再退回系统分配。 */
+        val ss = try {
+            ServerSocket(PREFERRED_PORT, 64, InetAddress.getByName("127.0.0.1"))
+        } catch (e: Exception) {
+            ServerSocket(0, 64, InetAddress.getByName("127.0.0.1"))
+        }
         server = ss
         port = ss.localPort
         pool.execute {
             while (!ss.isClosed) {
                 val c = try { ss.accept() } catch (e: Exception) { break }
-                try { pool.execute { handle(c) } } catch (e: Exception) { try { c.close() } catch (_: Exception) {} }
+                try { pool.execute { handle(c) } } catch (e: Exception) { try { c.close() } catch (_: Exception) { } }
             }
         }
         Log.i(tag, "forwarder up: 127.0.0.1:$port -> $upstreamHost")
@@ -314,6 +321,8 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
         private const val MAX_ATTEMPTS = 6
         /* WebSocket 上游断线后的最大重连次数（页面无感续连；远超此数视为长时间断网，交给页面处理） */
         private const val MAX_WS_RECONNECTS = 120
+        /* 本地转发固定端口：来源稳定 → 页面 localStorage（主题/上次会话等）得以保留 */
+        private const val PREFERRED_PORT = 43177
         private const val CONNECT_TIMEOUT_MS = 6000
         private const val READ_TIMEOUT_MS = 20000
         private val HOP_HEADERS = setOf(
