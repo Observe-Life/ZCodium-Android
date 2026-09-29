@@ -572,9 +572,14 @@ class MainActivity : Activity() {
                 if (url.contains("__zp_patch__")) Log.i(TAG, "patch asset requested: $url")
                 return try {
                     when {
+                        /*
+                         * 主文档不再由 App 预取（对齐参考项目 DSH：整页交给 WebView/Chromium 加载）。
+                         * 原因：Java 的 HttpURLConnection 没有 DNS 超时，直连 Cloudflare 不稳时会无限卡住；
+                         * Chromium 会换 IP、重试、用 HTTP2，稳定得多。补丁改在 onPageFinished 后置注入。
+                         */
                         request.isForMainFrame && MAIN_FRAME_PATTERN.matcher(url).find() -> {
-                            Log.i(TAG, "pattern matched, fetching HTML for patch injection")
-                            fetchPatchedHtml(url)
+                            Log.i(TAG, "main frame passthrough to WebView: $url")
+                            null
                         }
                         url.endsWith(PATCH_JS_PATH) -> {
                             Log.i(TAG, "serving patch js from assets")
