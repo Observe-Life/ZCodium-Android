@@ -180,6 +180,9 @@ class LocalForwarder(
                     try { conn.setRequestProperty(k, v) } catch (_: Exception) { }
                 }
                 try { conn.setRequestProperty("Accept-Encoding", "identity") } catch (_: Exception) { }
+                /* 告诉桥"页面其实在连本机转发"：桥据此把 workspace wsUrl 也指回 127.0.0.1，
+                   否则页面拿到隧道域名直连公网（实测直连失败率约 60%），工作区 socket 卡死。 */
+                try { conn.setRequestProperty("X-ZP-Client-Origin", "http://127.0.0.1:$port") } catch (_: Exception) { }
                 if (body.isNotEmpty()) {
                     conn.doOutput = true
                     conn.outputStream.use { it.write(body) }
