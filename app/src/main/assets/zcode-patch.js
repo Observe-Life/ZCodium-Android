@@ -546,11 +546,14 @@
     if (act) {
       e.preventDefault(); e.stopImmediatePropagation();
       var a = act.getAttribute('data-zp-act');
-      if (a === 'refresh') { location.reload(); return; }
-      /* 首页刷新：直接刷新，不做任何滑走动画（不走 goHome，避免 pop 动画误划走） */
-      if (a === 'hrefresh') {
-        try { history.replaceState({ zcodeMobilePage: 'home' }, ''); } catch (e2) { }
-        setTimeout(function () { location.reload(); }, 60);
+      if (a === 'refresh' || a === 'hrefresh') {
+        /* 刷新必须"看得见地重来一遍"：location.reload() 是普通重载，可能命中 WebView 缓存
+           秒回同一页面，用户感知＝点了没反应。改走原生强制重载（bypass 缓存），并先给一句提示。
+           native 不可用时退回 JS 重载兜底。 */
+        toast(a === 'hrefresh' ? '正在刷新…' : '正在刷新会话…');
+        if (a === 'hrefresh') { try { history.replaceState({ zcodeMobilePage: 'home' }, ''); } catch (e2) { } }
+        try { if (native && native.hardReload) { native.hardReload(); return; } } catch (eN) { }
+        setTimeout(function () { location.reload(); }, a === 'hrefresh' ? 60 : 0);
         return;
       }
       if (a === 'search') { openSearch('chat'); return; }

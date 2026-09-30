@@ -949,6 +949,16 @@ class MainActivity : Activity() {
             runOnUiThread { Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show() }
         }
 
+        /* 首页/会话页"刷新"：走 WebView 强制重载（bypass 缓存）。
+           JS 侧 location.reload() 是普通重载，可能命中缓存秒回同页，看起来就是"点了没反应"。 */
+        @JavascriptInterface
+        fun hardReload() {
+            Log.i(TAG, "native hardReload requested")
+            runOnUiThread {
+                try { browser.reload() } catch (e: Exception) { Log.w(TAG, "hardReload failed: ${e.message}") }
+            }
+        }
+
         @JavascriptInterface
         fun openExternal(url: String) {
             runOnUiThread {
