@@ -623,8 +623,11 @@ class MainActivity : Activity() {
                 pageLoaded = true
                 loadFailed = false
                 reloadWhenOnline = false
-                if (!url.isNullOrBlank() && url.contains("/remote/v4")) {
-                    getPreferences(MODE_PRIVATE).edit().putString(KEY_LAST_EFFECTIVE, url).apply()
+                /* 记录"当前实际连通的隧道"：即便 DoH 在换址窗口期给出旧地址，下次启动也有它兜底。
+                   （旧实现只在 /remote/v4 路径写"上次成功地址"，而实际加载走 /web-remote，等于从未写入。） */
+                val goodHost = forwarder?.activeHost.orEmpty()
+                if (goodHost.isNotBlank()) {
+                    getPreferences(MODE_PRIVATE).edit().putString(KEY_LAST_TUNNEL, goodHost).apply()
                 }
                 /* 后置注入：这次页面是 WebView 自己加载的（Java 抓取失败），补丁没进 HTML——
                    直接把补丁脚本与样式注入页面，工具栏/搜索/侧栏等能力照样可用 */
@@ -1083,35 +1086,42 @@ class MainActivity : Activity() {
             return
         }
         Thread {
-            val target = resolveTunnelHost(host)
-            /* 解析不到当前隧道时，优先落在"上次成功的隧道地址"——它通常仍可用；
-               绝不再退回固定域名：实测手机侧 qnszyg.de5.net 无法解析，等于必然失败。 */
-            val fallback = getPreferences(MODE_PRIVATE).getString(KEY_LAST_EFFECTIVE, "").orEmpty()
+            /* 收集**全部**候选隧道（换址窗口期 DoH 可能给出旧地址，单值不可靠） */
+            val resolved = resolveTunnelHosts(host)
+            val lastTunnel = getPreferences(MODE_PRIVATE).getString(KEY_LAST_TUNNEL, "").orEmpty()
+            val candidates = LinkedHashSet<String>()
+            candidates.addAll(resolved)
+            if (lastTunnel.isNotBlank()) candidates.add(lastTunnel)
             runOnUiThread {
                 val effective = when {
-                    // 解析到当前隧道：起本地转发并把页面指向 127.0.0.1（公网那段的抖动由转发层重试兜住）。
-                    target != null -> localForwardUrl(uri, target)
-                    fallback.isNotBlank() -> fallback
+                    // 有候选（新解析 + 上次成功）就起本地转发：页面只连 127.0.0.1，
+                    // 转发层对候选做失败轮转，公网抖动/换址窗口期都能自愈。
+                    candidates.isNotEmpty() -> localForwardUrl(uri, candidates.toList())
                     else -> configuredUrl
                 }
-                Log.i(TAG, "discovery: host=$host tunnel=$target retry=$retryCount -> $effective")
+                Log.i(TAG, "discovery: host=$host resolved=$resolved last=$lastTunnel retry=$retryCount -> $effective")
                 browser.loadUrl(effective)
             }
         }.start()
     }
 
-    /** 起（或复用）本地转发，返回"页面只连本机"的入口地址。 */
-    private fun localForwardUrl(uri: Uri, tunnelHost: String): String {
-        if (forwarder == null || forwarderHost != tunnelHost) {
+    /** 起（或复用）本地转发，返回"页面只连本机"的入口地址。candidates = 隧道候选列表（顺序=优先级）。 */
+    private fun localForwardUrl(uri: Uri, candidates: List<String>): String {
+        val key = candidates.joinToString("|")
+        if (forwarder == null || forwarderHost != key) {
             forwarder?.stop()
-            forwarder = LocalForwarder(tunnelHost, TAG)
-            forwarderHost = tunnelHost
+            forwarder = LocalForwarder(candidates, TAG) { goodHost ->
+                /* 转发层连上哪个候选就记哪个：换址后这里会持续刷新为当前有效隧道，
+                   下次启动即使 DoH 还在窗口期给出旧值，也有"上次成功"兜底。 */
+                getPreferences(MODE_PRIVATE).edit().putString(KEY_LAST_TUNNEL, goodHost).apply()
+            }
+            forwarderHost = key
         }
         val f = forwarder!!
         val p = if (f.port != 0) f.port else f.start()
         val token = uri.getQueryParameter("remoteControlToken").orEmpty()
         val local = "http://127.0.0.1:$p"
-        Log.i(TAG, "local forward ready: $local upstream=$tunnelHost tokenLen=${token.length}")
+        Log.i(TAG, "local forward ready: $local upstream=${candidates.joinToString(",")} tokenLen=${token.length}")
         /* relayOrigin 指向本机：页面后续 REST 与两条 WebSocket 全部落在 127.0.0.1，由转发层负责出网 */
         return "$local/web-remote?remoteControlToken=$token&relayOrigin=${Uri.encode(local)}"
     }
@@ -1135,8 +1145,9 @@ class MainActivity : Activity() {
         return true
     }
 
-    /** AliDNS DoH 查询：返回记录数据里出现的 trycloudflare 主机名。 */
-    private fun resolveTunnelHost(host: String): String? {
+    /** AliDNS DoH 查询：返回记录数据里出现的**全部** trycloudflare 主机名（去重保序，CNAME 在前）。 */
+    private fun resolveTunnelHosts(host: String): List<String> {
+        val out = LinkedHashSet<String>()
         for (type in listOf("CNAME", "TXT")) {
             try {
                 val conn = URL("https://dns.alidns.com/resolve?name=$host&type=$type")
@@ -1155,23 +1166,25 @@ class MainActivity : Activity() {
                 for (i in 0 until answer.length()) {
                     val data = answer.optJSONObject(i)?.optString("data").orEmpty()
                     if (data.contains("trycloudflare.com")) {
-                        return data.trim().replace("\"", "").split(" ")
+                        val h = data.trim().replace("\"", "").split(" ")
                             .lastOrNull { it.contains("trycloudflare.com") }
                             ?.trimEnd('.')
+                        if (!h.isNullOrBlank()) out.add(h)
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "doh $type failed: ${e.message}")
             }
         }
-        return null
+        return out.toList()
     }
 
     private companion object {
         const val TAG = "ZCodeRemote"
         const val KEY_REMOTE_URL = "remote_url"
         const val KEY_RESTORE_VERSION = "restore_version"
-        const val KEY_LAST_EFFECTIVE = "last_effective_url"
+        /* 上次成功连通的隧道主机（换址窗口期 DoH 给旧值时兜底；由转发层 onUpstreamOk 与 onPageFinished 刷新） */
+        const val KEY_LAST_TUNNEL = "last_tunnel_host"
         const val MAX_MAIN_FRAME_RETRY = 2
         /* 抓取页面 HTML 的尝试次数（直连 CF 边缘会间歇性重置，单次失败不放弃） */
         const val FETCH_ATTEMPTS = 3

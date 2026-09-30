@@ -24,9 +24,41 @@ import javax.net.ssl.SSLSocketFactory
  * 使页面的每条请求都稳定拿到结果——不开 VPN 也能长期稳定（与参考项目同等的稳定性由重试补足）。
  *
  * - HTTP：转发请求到 https://<upstreamHost><path>，失败自动重试；
- * - WebSocket：原始 TCP+TLS 建连（带重试），握手后裸流双向透传（不解析帧，保持最低开销）。
+ * - WebSocket：原始 TCP+TLS 建连（带重试），握手后裸流双向透传（不解析帧，保持最低开销）；
+ * - **候选上游（2026-09-30）**：路标（固定域名）在换址窗口期可能短暂指向已停隧道，
+ *   故上游改为候选列表：任一候选解析失败/连接失败即自动轮转到下一个，全部失败才算失败；
+ *   连上的候选经 onUpstreamOk 回调上报（App 侧据此记录"上次成功隧道"供下次兜底）。
  */
-class LocalForwarder(private val upstreamHost: String, private val tag: String = "ZCodeRemote") {
+class LocalForwarder(
+    upstreamHosts: List<String>,
+    private val tag: String = "ZCodeRemote",
+    private val onUpstreamOk: ((String) -> Unit)? = null,
+) {
+
+    private val candidates: List<String> =
+        upstreamHosts.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+    @Volatile
+    var activeHost: String = candidates.firstOrNull().orEmpty()
+        private set
+
+    private val rotateCursor = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** 当前上游失败（解析不到/连接被重置）时轮转到下一候选；单候选时原地重试。 */
+    private fun rotateUpstream(reason: String) {
+        if (candidates.size <= 1) return
+        val next = (rotateCursor.getAndIncrement() + 1) % candidates.size
+        val host = candidates[next]
+        if (host != activeHost) {
+            activeHost = host
+            Log.i(tag, "forward upstream rotate -> $host (${reason?.take(80)})")
+        }
+    }
+
+    private fun noteUpstreamOk(host: String) {
+        if (host != activeHost) activeHost = host
+        try { onUpstreamOk?.invoke(host) } catch (_: Exception) { }
+    }
 
     private var server: ServerSocket? = null
     private val pool = Executors.newCachedThreadPool()
@@ -52,7 +84,7 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
                 try { pool.execute { handle(c) } } catch (e: Exception) { try { c.close() } catch (_: Exception) { } }
             }
         }
-        Log.i(tag, "forwarder up: 127.0.0.1:$port -> $upstreamHost")
+        Log.i(tag, "forwarder up: 127.0.0.1:$port -> ${candidates.joinToString(",")} (active=$activeHost)")
         return port
     }
 
@@ -132,9 +164,10 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
         var lastErr: String? = null
         while (attempt < MAX_ATTEMPTS) {
             attempt++
+            val host = activeHost
             var conn: HttpURLConnection? = null
             try {
-                conn = URL("https://$upstreamHost$path").openConnection() as HttpURLConnection
+                conn = URL("https://$host$path").openConnection() as HttpURLConnection
                 conn.requestMethod = method
                 conn.connectTimeout = CONNECT_TIMEOUT_MS
                 conn.readTimeout = READ_TIMEOUT_MS
@@ -155,6 +188,7 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
                 val data = try {
                     (if (code in 200..299) conn.inputStream else conn.errorStream)?.use { it.readBytes() } ?: ByteArray(0)
                 } catch (e: Exception) { ByteArray(0) }
+                noteUpstreamOk(host)
 
                 val sb = StringBuilder("HTTP/1.1 $code ${conn.responseMessage ?: ""}\r\n")
                 for ((k, vs) in conn.headerFields) {
@@ -170,6 +204,9 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
                 return
             } catch (e: Exception) {
                 lastErr = e.message
+                /* 候选轮转：路标换址窗口期解析到的旧隧道可能整体不可达（UnknownHost），
+                   死磕同一地址只会 6 连败；换下一候选才有生路。 */
+                rotateUpstream("http: ${e.message}")
             } finally {
                 try { conn?.disconnect() } catch (_: Exception) { }
             }
@@ -220,14 +257,15 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
         var reconnects = 0
         val downBuf = ByteArray(16 * 1024)
         while (clientAlive.get() && reconnects <= MAX_WS_RECONNECTS) {
-            val up = connectUpstream()
-            if (up == null) {
+            val upPair = connectUpstream()
+            if (upPair == null) {
                 reconnects++
                 Log.w(tag, "forward ws upstream connect failed (attempt $reconnects)")
                 sleepQuiet(800)
                 continue
             }
-            if (!hold.install(up, method, path, headers, upstreamHost)) {
+            val (up, upHost) = upPair
+            if (!hold.install(up, method, path, headers, upHost)) {
                 Log.w(tag, "forward ws handshake write failed")
                 try { up.close() } catch (_: Exception) { }
                 reconnects++
@@ -256,25 +294,28 @@ class LocalForwarder(private val upstreamHost: String, private val tag: String =
         return null
     }
 
-    /** 建立到隧道的 TLS 连接（带 SNI 与重试）。 */
-    private fun connectUpstream(): SSLSocket? {
+    /** 建立到隧道的 TLS 连接（带 SNI 与重试；多候选时失败自动轮转）。返回 (socket, 实际主机)。 */
+    private fun connectUpstream(): Pair<SSLSocket, String>? {
         var attempt = 0
         while (attempt < MAX_ATTEMPTS) {
             attempt++
+            val host = activeHost
             try {
                 val s = sslFactory.createSocket() as SSLSocket
-                s.connect(InetSocketAddress(upstreamHost, 443), CONNECT_TIMEOUT_MS)
+                s.connect(InetSocketAddress(host, 443), CONNECT_TIMEOUT_MS)
                 /* 必须显式设置 SNI：无 SNI 时 Cloudflare 边缘认不出目标隧道 → 直接重置连接 */
                 runCatching {
                     val params = s.sslParameters
-                    params.serverNames = listOf(javax.net.ssl.SNIHostName(upstreamHost))
+                    params.serverNames = listOf(javax.net.ssl.SNIHostName(host))
                     s.sslParameters = params
                 }
                 s.soTimeout = 0
                 s.startHandshake()
-                return s
+                noteUpstreamOk(host)
+                return s to host
             } catch (e: Exception) {
                 Log.w(tag, "forward ws tls attempt $attempt failed: ${e.message}")
+                rotateUpstream("ws tls: ${e.message}")
                 sleepQuiet(400)
             }
         }
