@@ -44,6 +44,20 @@ class LocalForwarder(
 
     private val rotateCursor = java.util.concurrent.atomic.AtomicInteger(0)
 
+    /* 每候选连续失败计数（2026-09-30 实测：活隧道也会"Connection reset"瞬断约 60%，
+       若第一次失败就轮转，会把预算浪费在死候选上、把连上活隧道的机会轮没——
+       页面 window socket 预算仅约 3 秒，必须"原地重试优先、连续失败才换、解析不到立即换"）。 */
+    private val consecutiveFailures = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /** 记录一次失败；返回 true 表示应轮转到下一候选。 */
+    private fun noteUpstreamFail(host: String, msg: String?): Boolean {
+        val n = (consecutiveFailures[host] ?: 0) + 1
+        consecutiveFailures[host] = n
+        val nxdomain = msg != null &&
+            (msg.contains("Unable to resolve host") || msg.contains("No address associated"))
+        return nxdomain || n >= 3
+    }
+
     /** 当前上游失败（解析不到/连接被重置）时轮转到下一候选；单候选时原地重试。 */
     private fun rotateUpstream(reason: String) {
         if (candidates.size <= 1) return
@@ -57,6 +71,7 @@ class LocalForwarder(
 
     private fun noteUpstreamOk(host: String) {
         if (host != activeHost) activeHost = host
+        consecutiveFailures.remove(host)
         try { onUpstreamOk?.invoke(host) } catch (_: Exception) { }
     }
 
@@ -207,13 +222,15 @@ class LocalForwarder(
                 return
             } catch (e: Exception) {
                 lastErr = e.message
-                /* 候选轮转：路标换址窗口期解析到的旧隧道可能整体不可达（UnknownHost），
-                   死磕同一地址只会 6 连败；换下一候选才有生路。 */
-                rotateUpstream("http: ${e.message}")
+                /* 原地重试优先：活隧道瞬断（Connection reset 类）先留在原候选重试；
+                   连续 3 次失败或域名解析不到，才轮转到下一候选。 */
+                if (noteUpstreamFail(host, e.message)) {
+                    rotateUpstream("http: ${e.message}")
+                }
             } finally {
                 try { conn?.disconnect() } catch (_: Exception) { }
             }
-            if (attempt < MAX_ATTEMPTS) sleepQuiet(500)
+            if (attempt < MAX_ATTEMPTS) sleepQuiet(400)
         }
         Log.w(tag, "forward http gave up: $method $path after $attempt attempts ($lastErr)")
         try {
@@ -318,7 +335,9 @@ class LocalForwarder(
                 return s to host
             } catch (e: Exception) {
                 Log.w(tag, "forward ws tls attempt $attempt failed: ${e.message}")
-                rotateUpstream("ws tls: ${e.message}")
+                if (noteUpstreamFail(host, e.message)) {
+                    rotateUpstream("ws tls: ${e.message}")
+                }
                 sleepQuiet(400)
             }
         }
